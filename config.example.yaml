@@ -1,0 +1,33 @@
+# Role of this machine: "host" (desktop) or "client" (laptop)
+role: host
+
+# Wake word spoken to activate the assistant
+wake_word: condensor
+
+# Only required when role is "client" — the Host machine's LAN IP
+host_ip: 192.168.1.100
+host_port: 8765
+
+# Anthropic API key (https://console.anthropic.com)
+anthropic_api_key: YOUR_ANTHROPIC_API_KEY_HERE
+
+# Tuya IoT devices
+# Run `python -m tinytuya wizard` to discover devices and get their keys
+tuya:
+  devices:
+    - name: Living Room Light
+      device_id: abc123def456
+      local_key: xxxxxxxxxxxx
+      ip: 192.168.1.50
+      version: 3.3
+    - name: Bedroom Fan
+      device_id: def789ghi012
+      local_key: yyyyyyyyyyyy
+      ip: 192.168.1.51
+      version: 3.3
+
+# Spotify (https://developer.spotify.com — create an app)
+spotify:
+  client_id: YOUR_SPOTIFY_CLIENT_ID
+  client_secret: YOUR_SPOTIFY_CLIENT_SECRET
+  redirect_uri: http://localhost:8888/callback
