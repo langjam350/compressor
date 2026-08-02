@@ -80,8 +80,8 @@ def run(on_complete: Callable[[list[dict]], None] | None = None) -> None:
         cloud_dev = cloud_by_id.get(entry.get("device_id", ""))
         if not cloud_dev:
             continue
-        if cloud_dev.get("key"):
-            entry["local_key"] = cloud_dev["key"]
+        if cloud_dev.get("local_key"):
+            entry["local_key"] = cloud_dev["local_key"]
         if cloud_dev.get("ip"):
             entry["ip"] = cloud_dev["ip"]
         if cloud_dev.get("version"):
@@ -104,7 +104,7 @@ def run(on_complete: Callable[[list[dict]], None] | None = None) -> None:
             {
                 "name": name,
                 "device_id": dev_id,
-                "local_key": cloud_dev.get("key", ""),
+                "local_key": cloud_dev.get("local_key", ""),
                 "ip": cloud_dev.get("ip", ""),
                 "version": version,
             }
