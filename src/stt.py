@@ -23,7 +23,7 @@ class SpeechListener:
         # One-time calibration — mic is opened then immediately closed
         with sr.Microphone() as source:
             self._recognizer.adjust_for_ambient_noise(source, duration=1)
-        print(f"[Condensor] Listening for wake word '{self.wake_word}'...")
+        print(f"[Compressor] Listening for wake word '{self.wake_word}'...")
 
         while True:
             # Phase 1: open mic, capture audio, close mic before any processing
@@ -49,7 +49,7 @@ class SpeechListener:
             query = extract_query(text, self.wake_word)
             if query:
                 # Inline: "condenser play music" — mic is closed, yield immediately
-                print(f"[Condensor] Heard: {query}")
+                print(f"[Compressor] Heard: {query}")
                 yield query  # caller TTS works — mic is not open
                 continue
 
@@ -69,7 +69,7 @@ class SpeechListener:
                     print(f"[Condensor] Heard: {query2}")
                     yield query2  # caller TTS works — mic is not open
                 else:
-                    print("[Condensor] Standing by.")
+                    print("[Compressor] Standing by.")
             except (sr.WaitTimeoutError, sr.UnknownValueError):
                 print("[Condensor] Standing by.")
             except sr.RequestError as e:

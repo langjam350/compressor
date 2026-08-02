@@ -1,24 +1,24 @@
 def test_extract_query_finds_keyword():
     from src.stt import extract_query
-    result = extract_query("condensor tell me about mars", "condensor")
+    result = extract_query("compressor tell me about mars", "compressor")
     assert result == "tell me about mars"
 
 
 def test_extract_query_case_insensitive():
     from src.stt import extract_query
-    result = extract_query("Condensor How far is Chicago", "condensor")
+    result = extract_query("Compressor How far is Chicago", "compressor")
     assert result == "How far is Chicago"
 
 
 def test_extract_query_returns_none_when_missing():
     from src.stt import extract_query
-    result = extract_query("tell me about mars", "condensor")
+    result = extract_query("tell me about mars", "compressor")
     assert result is None
 
 
 def test_extract_query_returns_none_when_nothing_after_keyword():
     from src.stt import extract_query
-    result = extract_query("condensor", "condensor")
+    result = extract_query("compressor", "compressor")
     assert result is None
 
 
@@ -29,11 +29,11 @@ def test_speech_listener_yields_inline_query(mocker):
 
     mock_r = mock_recognizer.return_value
     mock_r.listen.return_value = mocker.Mock()
-    mock_r.recognize_google.return_value = "condensor play music"
+    mock_r.recognize_google.return_value = "compressor play music"
 
     on_wake = mocker.Mock()
     from src.stt import SpeechListener
-    listener = SpeechListener("condensor", on_wake=on_wake)
+    listener = SpeechListener("compressor", on_wake=on_wake)
     gen = listener.listen_for_commands()
     result = next(gen)
     assert result == "play music"
@@ -48,13 +48,13 @@ def test_speech_listener_two_phase(mocker):
     mock_r = mock_recognizer.return_value
     mock_r.listen.return_value = mocker.Mock()
     mock_r.recognize_google.side_effect = [
-        "condensor",    # Phase 1: wake word only
+        "compressor",    # Phase 1: wake word only
         "play music",   # Phase 2: query
     ]
 
     on_wake = mocker.Mock()
     from src.stt import SpeechListener
-    listener = SpeechListener("condensor", on_wake=on_wake)
+    listener = SpeechListener("compressor", on_wake=on_wake)
     gen = listener.listen_for_commands()
     result = next(gen)
     assert result == "play music"
@@ -69,13 +69,13 @@ def test_speech_listener_on_wake_exception_does_not_crash(mocker):
     mock_r = mock_recognizer.return_value
     mock_r.listen.return_value = mocker.Mock()
     mock_r.recognize_google.side_effect = [
-        "condensor",    # Phase 1: wake word only
+        "compressor",    # Phase 1: wake word only
         "play music",   # Phase 2: query
     ]
 
     on_wake = mocker.Mock(side_effect=RuntimeError("TTS subprocess died"))
     from src.stt import SpeechListener
-    listener = SpeechListener("condensor", on_wake=on_wake)
+    listener = SpeechListener("compressor", on_wake=on_wake)
     gen = listener.listen_for_commands()
     result = next(gen)
     assert result == "play music"
@@ -93,7 +93,7 @@ def test_listen_once_returns_text_when_speech_detected(mocker):
     mock_r.recognize_google.return_value = "turn off the lights"
 
     from src.stt import SpeechListener
-    listener = SpeechListener("condensor")
+    listener = SpeechListener("compressor")
     result = listener.listen_once(timeout=5)
 
     assert result == "turn off the lights"
@@ -108,7 +108,7 @@ def test_listen_once_returns_none_on_timeout(mocker):
     mock_r.listen.side_effect = sr.WaitTimeoutError()
 
     from src.stt import SpeechListener
-    listener = SpeechListener("condensor")
+    listener = SpeechListener("compressor")
     result = listener.listen_once(timeout=5)
 
     assert result is None
@@ -124,7 +124,7 @@ def test_listen_once_returns_none_on_unrecognized_speech(mocker):
     mock_r.recognize_google.side_effect = sr.UnknownValueError()
 
     from src.stt import SpeechListener
-    listener = SpeechListener("condensor")
+    listener = SpeechListener("compressor")
     result = listener.listen_once(timeout=5)
 
     assert result is None

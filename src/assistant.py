@@ -22,7 +22,7 @@ def build_system_prompt(location: dict, devices: list[dict]) -> str:
     city = location.get("city", "Unknown")
     region = location.get("region", "Unknown")
     tz = location.get("timezone", "Unknown")
-    return f"""You are Condensor, a friendly AI voice assistant for the home. Your responses will be spoken aloud, so:
+    return f"""You are Compressor, a friendly AI voice assistant for the home. Your responses will be spoken aloud, so:
 - Be concise (1-3 sentences unless the user asks for detail)
 - Avoid markdown, bullet points, or formatting
 - Speak naturally
@@ -55,7 +55,7 @@ class Assistant:
                 daemon=True,
             )
             t.start()
-            print(f"[Condensor] Host server started on port {host_port}")
+            print(f"[Compressor] Host server started on port {host_port}")
             time.sleep(1)  # Give uvicorn time to bind before the WS client connects
 
         location = self._network.get_info()
@@ -135,7 +135,7 @@ class Assistant:
 
     def run(self):
         try:
-            self._tts.speak("Condensor ready.")
+            self._tts.speak("Compressor ready.")
         except Exception as e:
             print(f"[TTS Error] {e}")
         try:
@@ -162,6 +162,6 @@ class Assistant:
                     print("[Assistant] Done.")
                     query = self._listener.listen_once(timeout=5)
                 self._ai.reset()
-                print(f"[Condensor] Listening for wake word '{self._listener.wake_word}'...")
+                print(f"[Compressor] Listening for wake word '{self._listener.wake_word}'...")
         except KeyboardInterrupt:
-            print("\n[Condensor] Shutting down.")
+            print("\n[Compressor] Shutting down.")

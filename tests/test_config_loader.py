@@ -9,11 +9,11 @@ def write_config(tmp_path, content: str) -> str:
 
 
 def test_load_config_returns_dict(tmp_path):
-    path = write_config(tmp_path, "role: host\nwake_word: condensor\nanthropic_api_key: key123\n")
+    path = write_config(tmp_path, "role: host\nwake_word: compressor\nanthropic_api_key: key123\n")
     from src.config_loader import load_config
     result = load_config(path)
     assert result["role"] == "host"
-    assert result["wake_word"] == "condensor"
+    assert result["wake_word"] == "compressor"
 
 
 def test_load_config_missing_required_key_raises(tmp_path):
@@ -30,7 +30,7 @@ def test_load_config_file_not_found():
 
 
 def test_load_config_client_requires_host_ip(tmp_path):
-    path = write_config(tmp_path, "role: client\nwake_word: condensor\nanthropic_api_key: key\n")
+    path = write_config(tmp_path, "role: client\nwake_word: compressor\nanthropic_api_key: key\n")
     from src.config_loader import load_config, ConfigError
     with pytest.raises(ConfigError, match="host_ip"):
         load_config(path)

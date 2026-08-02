@@ -12,7 +12,7 @@ def test_build_system_prompt_includes_location_and_devices():
 def _make_assistant(mocker, listener_queries, listen_once_returns):
     """Helper: build a fully-mocked Assistant for run() tests."""
     mocker.patch("src.assistant.load_config", return_value={
-        "wake_word": "condensor",
+        "wake_word": "compressor",
         "role": "host",
         "host_port": 8765,
         "anthropic_api_key": "test-key",
@@ -25,7 +25,7 @@ def _make_assistant(mocker, listener_queries, listen_once_returns):
     mock_ai.ask.return_value = "I'll handle that."
     mocker.patch("src.assistant.AIClient", return_value=mock_ai)
     mock_listener = mocker.MagicMock()
-    mock_listener.wake_word = "condensor"
+    mock_listener.wake_word = "compressor"
     mock_listener.listen_for_commands.return_value = iter(listener_queries)
     mock_listener.listen_once.side_effect = list(listen_once_returns)
     mocker.patch("src.assistant.SpeechListener", return_value=mock_listener)
@@ -82,7 +82,7 @@ def test_run_prints_listening_message_after_conversation_ends(mocker, capsys):
 def test_assistant_passes_on_wake_to_listener(mocker):
     """Assistant wires tts.speak('Yes?') as the on_wake callback."""
     mocker.patch("src.assistant.load_config", return_value={
-        "wake_word": "condensor",
+        "wake_word": "compressor",
         "role": "host",
         "host_port": 8765,
         "anthropic_api_key": "test-key",
