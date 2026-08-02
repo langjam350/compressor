@@ -49,3 +49,29 @@ def test_network_client_get_info_on_failure(mocker):
     info = client.get_info()
 
     assert info == {}
+
+
+def test_network_client_query_returns_response(mocker):
+    mock_post = mocker.patch("src.network.client.httpx.post")
+    mock_post.return_value.json.return_value = {"response": "Living Room Light turned on."}
+
+    from src.network.client import NetworkClient
+    client = NetworkClient("192.168.1.100", 8765)
+    result = client.query("Kitchen", "turn on the living room light")
+
+    assert result == "Living Room Light turned on."
+    mock_post.assert_called_once_with(
+        "http://192.168.1.100:8765/query",
+        json={"unit_name": "Kitchen", "text": "turn on the living room light"},
+        timeout=15.0,
+    )
+
+
+def test_network_client_query_on_failure_returns_fallback(mocker):
+    mocker.patch("src.network.client.httpx.post", side_effect=Exception("timeout"))
+
+    from src.network.client import NetworkClient
+    client = NetworkClient("192.168.1.100", 8765)
+    result = client.query("Kitchen", "turn on the living room light")
+
+    assert result == "Sorry, I can't reach the host right now."

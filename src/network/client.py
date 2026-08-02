@@ -22,6 +22,17 @@ class NetworkClient:
         except Exception:
             return {}
 
+    def query(self, unit_name: str, text: str) -> str:
+        try:
+            resp = httpx.post(
+                f"{self._base}/query",
+                json={"unit_name": unit_name, "text": text},
+                timeout=15.0,
+            )
+            return resp.json()["response"]
+        except Exception:
+            return "Sorry, I can't reach the host right now."
+
     def on_message(self, callback: Callable[[dict], None]):
         """Register a callback for incoming WebSocket messages."""
         self._on_message = callback
