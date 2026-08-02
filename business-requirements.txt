@@ -1,0 +1,150 @@
+COMPRESSOR — BUSINESS REQUIREMENTS
+Last updated: 2026-08-02
+
+===============================================================================
+1. PURPOSE
+===============================================================================
+Compressor is a multi-computer, voice-activated home assistant (an
+Alexa-style system built from commodity hardware). One instance acts as
+HOST; any number of other instances act as FOLLOWERS. Together they let a
+household speak to any unit in any room and get the same assistant,
+the same smart-home control, and the same music control — with all
+external/LAN communication and system-of-record logging centralized on
+the host.
+
+===============================================================================
+2. ROLES
+===============================================================================
+
+HOST (exactly one per system)
+  - Runs the network server (FastAPI/uvicorn) that followers connect to.
+  - Is the ONLY unit permitted to make outbound requests to anything
+    outside its own process:
+      * Anthropic/Claude API calls (the AI brain)
+      * Spotify Web API calls
+      * ipinfo.io geolocation lookup
+      * Tuya cloud resync
+      * Direct LAN control of Tuya smart-home devices
+  - Has its own microphone and speaker and behaves like a follower from
+    the user's point of view — plus the responsibilities above.
+  - Keeps a detailed, append-only action log covering everything done
+    anywhere in the system (its own actions and every action performed
+    on behalf of a follower), so the household has a single audit trail.
+
+FOLLOWER (zero or more per system)
+  - Thin client: local microphone (wake word + query capture) and local
+    speaker (speaking the response) only.
+  - Never calls Tuya, Spotify, Anthropic, or any other external/LAN
+    service directly. Every query is forwarded to the host; the host
+    does the work and sends back a spoken response.
+  - From the user's perspective, a follower unit is indistinguishable
+    from the host — same wake word, same conversational ability, same
+    device/music control, same voice.
+
+===============================================================================
+3. FUNCTIONAL REQUIREMENTS
+===============================================================================
+
+3.1 Wake word
+  - The activation phrase is "compressor" (renamed from the earlier
+    "condenser"/"condensor"). The assistant's spoken persona name and
+    all log prefixes are renamed to match ("Compressor ready.",
+    [Compressor] ... instead of [Condensor] ...).
+  - Every unit (host and each follower) listens for the wake word
+    continuously and in the background — the household should be able
+    to say "Compressor" at any time, from any room with a unit, without
+    pressing a button or opening an app.
+
+3.2 Query handling
+  - Wake word alone -> unit responds "Yes?" and listens for a follow-up
+    command (two-phase wake word flow, already implemented in stt.py).
+  - Wake word + inline command (e.g. "Compressor, turn on the porch
+    light") -> handled in one shot, no "Yes?" round trip needed.
+  - Non-device questions (trivia, advice, general conversation) must be
+    answered like a general-purpose assistant, not just deflected to
+    "I can't do that."
+
+3.3 Smart-home control (Tuya)
+  - Any unit's user can ask to control any registered Tuya device by
+    name ("turn on the Living Room Light").
+  - Only the host actually talks to the device; followers relay the
+    request to the host and speak back the host's confirmation.
+  - Device list refreshes automatically once daily (existing midnight
+    Tuya cloud sync) so newly added/renamed devices stay current
+    without a restart.
+
+3.4 Music control (Spotify)
+  - Any unit's user can ask to play/pause/skip music.
+  - "Play on all speakers" (house-wide) requests cause every connected
+    follower to start local playback in sync, pushed from the host.
+
+3.5 Action logging (host only)
+  - Every action taken anywhere in the system is recorded by the host:
+    wake events, queries received, which unit they came from, AI
+    responses, tool calls (device control, music control) and their
+    results, and errors.
+  - Log entries are attributable to the originating unit (host or a
+    named follower), not just "someone."
+
+3.6 Networking
+  - Followers connect to the host over the LAN. A follower query to the
+    host is a request/response call (POST to the host); the host also
+    pushes broadcast-style events (e.g. house-wide Spotify sync) to all
+    connected followers over the existing WebSocket relay.
+  - Follower reconnects automatically if it loses connection to the
+    host (already implemented backoff/retry).
+
+===============================================================================
+4. NON-FUNCTIONAL / CONSTRAINTS
+===============================================================================
+  - No follower may hold or use API keys/credentials for Anthropic,
+    Spotify, or Tuya cloud — those live only in the host's config.
+  - Secrets (API keys, Tuya local keys, config.yaml, devices.json,
+    snapshot.json, tuya-raw.json) must never be committed to git.
+  - Runs on Windows with Python 3.11 today; design should not assume
+    anything host-OS-specific beyond what's already in use (pyttsx3,
+    speech_recognition).
+
+===============================================================================
+5. DEFINITION OF SUCCESS — ACCEPTANCE SCENARIOS
+===============================================================================
+The system is considered working when all of the following hold true:
+
+  [ ] Say "Compressor" alone on any unit -> that unit audibly responds
+      "Yes?" and then listens for a command.
+
+  [ ] Say "Compressor, turn on the Living Room Light" on the HOST ->
+      the light turns on and the host speaks a confirmation.
+
+  [ ] Say "Compressor, turn on the Living Room Light" on a FOLLOWER ->
+      the request reaches the host, the host controls the physical
+      device, and the FOLLOWER (not the host) speaks the confirmation.
+
+  [ ] Say "Compressor, play [song/artist] on all speakers" on any unit
+      -> playback starts on every connected follower's speaker as well
+      as the requesting unit.
+
+  [ ] Ask a general knowledge/conversational question ("Compressor,
+      what's a good substitute for buttermilk?") on any unit -> get a
+      relevant spoken answer, not a device-control error.
+
+  [ ] Unplug/kill network connectivity on a follower, then restore it
+      -> the follower automatically reconnects to the host without a
+      restart.
+
+  [ ] After a session of mixed activity (device control, music, Q&A,
+      from multiple units), the host's action log contains a
+      time-ordered, per-unit-attributed entry for every one of those
+      actions.
+
+  [ ] Inspect a follower's process/config -> it holds no Anthropic,
+      Spotify, or Tuya-cloud credentials, and makes no direct outbound
+      calls to those services (confirmable via its dependencies/config).
+
+  [ ] Turn off the host -> followers stop being able to fulfill
+      requests (expected, since host is the sole external gateway), and
+      recover automatically once the host comes back online.
+
+  [ ] `config.yaml`, `devices.json`, `snapshot.json`, and
+      `tuya-raw.json` never appear in `git status` as tracked/staged
+      files.
