@@ -48,7 +48,7 @@ class SpeechListener:
 
             query = extract_query(text, self.wake_word)
             if query:
-                # Inline: "condenser play music" — mic is closed, yield immediately
+                # Inline: "compressor play music" — mic is closed, yield immediately
                 print(f"[Compressor] Heard: {query}")
                 yield query  # caller TTS works — mic is not open
                 continue
@@ -66,12 +66,12 @@ class SpeechListener:
                     audio2 = self._recognizer.listen(source, timeout=5, phrase_time_limit=10)
                 query2 = self._recognizer.recognize_google(audio2).strip()
                 if query2:
-                    print(f"[Condensor] Heard: {query2}")
+                    print(f"[Compressor] Heard: {query2}")
                     yield query2  # caller TTS works — mic is not open
                 else:
                     print("[Compressor] Standing by.")
             except (sr.WaitTimeoutError, sr.UnknownValueError):
-                print("[Condensor] Standing by.")
+                print("[Compressor] Standing by.")
             except sr.RequestError as e:
                 print(f"[STT Error] {e}")
             except Exception as e:
