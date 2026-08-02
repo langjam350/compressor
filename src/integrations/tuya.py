@@ -1,4 +1,13 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import tinytuya
+
+# Tight limits: tinytuya's defaults (5s timeout x 5 retries + 5s delays) block
+# for ~45s per unreachable device, and an empty address triggers an 18s UDP
+# discovery scan that raises if the device isn't found.
+_CONNECTION_TIMEOUT = 3
+_CONNECTION_RETRY_LIMIT = 1
+_MAX_PARALLEL = 8
 
 # Maps spoken category terms to the keywords that identify matching devices.
 _CATEGORY_EXPANSION: dict[str, list[str]] = {
@@ -37,6 +46,8 @@ class TuyaController:
             address=dev["ip"],
             local_key=dev["local_key"],
             version=dev.get("version", 3.3),
+            connection_timeout=_CONNECTION_TIMEOUT,
+            connection_retry_limit=_CONNECTION_RETRY_LIMIT,
         )
         if action == "on":
             device.turn_on()
@@ -48,21 +59,33 @@ class TuyaController:
             device.turn_off() if is_on else device.turn_on()
         return f"{dev['name']} turned {action}."
 
+    def _safe_control(self, dev: dict, action: str) -> str:
+        """Control one device, converting unusable config or errors into a report string."""
+        if not dev.get("ip"):
+            return f"{dev['name']} skipped (no IP — run the network scan to find it)."
+        if not dev.get("local_key"):
+            return f"{dev['name']} skipped (no local key — run the Tuya sync)."
+        try:
+            return self._control_single(dev, action)
+        except Exception as e:
+            return f"{dev['name']} failed ({e})."
+
     def control(self, device_name: str, action: str) -> str:
         # 1. Exact name match
         key = device_name.lower()
         if key in self._devices:
-            return self._control_single(self._devices[key], action)
+            return self._safe_control(self._devices[key], action)
 
         # 2. Category match ("lights", "bedroom lights", "fans", "all", …)
         devices = self._find_devices_by_category(device_name)
         if devices:
-            results = [self._control_single(dev, action) for dev in devices]
+            with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, len(devices))) as pool:
+                results = list(pool.map(lambda d: self._safe_control(d, action), devices))
             return f"Controlled {len(devices)} device(s): " + "; ".join(results)
 
         # 3. Fuzzy name match (substring fallback)
         for dev_key, dev in self._devices.items():
             if key in dev_key or dev_key in key:
-                return self._control_single(dev, action)
+                return self._safe_control(dev, action)
 
         return f"Device '{device_name}' not found. Check your config.yaml device list."

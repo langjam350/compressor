@@ -120,3 +120,71 @@ def test_control_category_with_no_matches_returns_not_found(mocker):
     result = ctrl.control("televisions", "on")
 
     assert "not found" in result.lower()
+
+
+# --- resilience: skips, per-device isolation, timeouts ---
+
+MIXED_DEVICES = [
+    {"name": "Good Light", "device_id": "g1", "local_key": "k1", "ip": "192.168.0.10", "version": 3.3},
+    {"name": "No IP Light", "device_id": "n1", "local_key": "k2", "ip": "", "version": 3.3},
+    {"name": "No Key Light", "device_id": "n2", "local_key": "", "ip": "192.168.0.11", "version": 3.3},
+    {"name": "Broken Light", "device_id": "b1", "local_key": "k3", "ip": "192.168.0.12", "version": 3.3},
+]
+
+
+def test_device_without_ip_is_skipped_not_scanned(mocker):
+    """Empty ip must NOT construct OutletDevice (tinytuya would run an 18s UDP scan then raise)."""
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    result = ctrl.control("No IP Light", "on")
+
+    mock_device_cls.assert_not_called()
+    assert "no ip" in result.lower() or "skipped" in result.lower()
+
+
+def test_device_without_local_key_is_skipped(mocker):
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    result = ctrl.control("No Key Light", "on")
+
+    mock_device_cls.assert_not_called()
+    assert "no local key" in result.lower() or "skipped" in result.lower()
+
+
+def test_one_failing_device_does_not_abort_category(mocker):
+    """A raise from one device must not prevent the others from being controlled."""
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+
+    good = mocker.MagicMock()
+    broken = mocker.MagicMock()
+    broken.turn_on.side_effect = OSError("connection refused")
+
+    def factory(dev_id, address, local_key, version, **kwargs):
+        return broken if dev_id == "b1" else good
+
+    mock_device_cls.side_effect = factory
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    result = ctrl.control("lights", "on")
+
+    good.turn_on.assert_called_once()          # Good Light still controlled
+    assert "Good Light" in result
+    assert "failed" in result.lower() or "error" in result.lower()  # Broken Light reported
+
+
+def test_outlet_device_constructed_with_tight_timeouts(mocker):
+    """Defaults (5s timeout x 5 retries) block far too long; must be tightened."""
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    ctrl.control("Good Light", "on")
+
+    kwargs = mock_device_cls.call_args.kwargs
+    assert kwargs.get("connection_timeout", 99) <= 3
+    assert kwargs.get("connection_retry_limit", 99) <= 1
