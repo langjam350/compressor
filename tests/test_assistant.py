@@ -108,3 +108,138 @@ def test_assistant_passes_on_wake_to_listener(mocker):
     # Trigger the callback and confirm it calls tts.speak("Yes?")
     call_kwargs.kwargs["on_wake"]()
     mock_tts_instance.speak.assert_called_once_with("Yes?")
+
+
+def _follower_config(**overrides):
+    config = {
+        "wake_word": "compressor",
+        "role": "follower",
+        "host_ip": "192.168.1.50",
+        "host_port": 8765,
+        "unit_name": "Kitchen",
+        "anthropic_api_key": "test-key",
+        "tuya": {},
+        "spotify": {},
+    }
+    config.update(overrides)
+    return config
+
+
+def _make_follower_assistant(mocker, listener_queries, listen_once_returns, network_query_return="Handled."):
+    mocker.patch("src.assistant.load_config", return_value=_follower_config())
+    mocker.patch("src.assistant.TTSEngine", return_value=mocker.MagicMock())
+    mock_listener = mocker.MagicMock()
+    mock_listener.wake_word = "compressor"
+    mock_listener.listen_for_commands.return_value = iter(listener_queries)
+    mock_listener.listen_once.side_effect = list(listen_once_returns)
+    mocker.patch("src.assistant.SpeechListener", return_value=mock_listener)
+
+    mock_network_cls = mocker.patch("src.assistant.NetworkClient")
+    mock_network = mock_network_cls.return_value
+    mock_network.get_info.return_value = {}
+    mock_network.query.return_value = network_query_return
+
+    mock_ai_cls = mocker.patch("src.assistant.AIClient")
+    mock_tuya_cls = mocker.patch("src.assistant.TuyaController")
+    mock_spotify_cls = mocker.patch("src.assistant.SpotifyController")
+    mock_scheduler_cls = mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.run_server")
+    mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+
+    from src.assistant import Assistant
+    assistant = Assistant()
+    return assistant, mock_ai_cls, mock_tuya_cls, mock_spotify_cls, mock_scheduler_cls, mock_network
+
+
+def test_follower_never_constructs_ai_tuya_spotify_scheduler(mocker):
+    assistant, mock_ai_cls, mock_tuya_cls, mock_spotify_cls, mock_scheduler_cls, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    mock_ai_cls.assert_not_called()
+    mock_tuya_cls.assert_not_called()
+    mock_spotify_cls.assert_not_called()
+    mock_scheduler_cls.assert_not_called()
+    assert assistant._ai_clients == {}
+    assert assistant._tuya is None
+    assert assistant._spotify is None
+    assert assistant._scheduler is None
+
+
+def test_follower_run_delegates_query_to_network(mocker):
+    assistant, _, _, _, _, mock_network = _make_follower_assistant(
+        mocker,
+        listener_queries=["turn on the lights"],
+        listen_once_returns=[None],
+        network_query_return="Living Room Light turned on.",
+    )
+    assistant.run()
+
+    mock_network.query.assert_called_once_with("Kitchen", "turn on the lights")
+
+
+def test_host_isolates_conversations_per_unit(mocker):
+    mocker.patch("src.assistant.load_config", return_value={
+        "wake_word": "compressor",
+        "role": "host",
+        "host_port": 8765,
+        "anthropic_api_key": "test-key",
+        "tuya": {},
+        "spotify": {},
+    })
+    mocker.patch("src.assistant.TTSEngine", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.SpeechListener", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.NetworkClient")
+    mocker.patch("src.assistant.run_server")
+    mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.TuyaController")
+    mocker.patch("src.assistant.Scheduler")
+
+    mock_ai_cls = mocker.patch("src.assistant.AIClient")
+    mock_ai_cls.side_effect = lambda *a, **k: mocker.MagicMock()
+
+    from src.assistant import Assistant
+    assistant = Assistant()
+
+    client_a = assistant._get_ai_client("Kitchen")
+    client_b = assistant._get_ai_client("Living Room")
+    client_a_again = assistant._get_ai_client("Kitchen")
+
+    assert client_a is not client_b
+    assert client_a is client_a_again
+    assert mock_ai_cls.call_count == 2
+
+
+def test_process_query_logs_query_and_response(mocker):
+    mocker.patch("src.assistant.load_config", return_value={
+        "wake_word": "compressor",
+        "role": "host",
+        "host_port": 8765,
+        "anthropic_api_key": "test-key",
+        "tuya": {},
+        "spotify": {},
+    })
+    mocker.patch("src.assistant.TTSEngine", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.SpeechListener", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.NetworkClient")
+    mocker.patch("src.assistant.run_server")
+    mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.TuyaController")
+    mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
+    mock_log_query = mocker.patch("src.assistant.action_log.log_query")
+    mock_log_response = mocker.patch("src.assistant.action_log.log_response")
+
+    mock_ai = mocker.MagicMock()
+    mock_ai.ask.return_value = "Living Room Light turned on."
+    mocker.patch("src.assistant.AIClient", return_value=mock_ai)
+
+    from src.assistant import Assistant
+    assistant = Assistant()
+    result = assistant._process_query("host", "turn on the living room light")
+
+    assert result == "Living Room Light turned on."
+    mock_log_query.assert_called_once_with("host", "turn on the living room light")
+    mock_log_response.assert_called_once_with("host", "Living Room Light turned on.")

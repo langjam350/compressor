@@ -1,8 +1,8 @@
-import json
 import logging
 import threading
 import time
 
+from src import action_log
 from src.config_loader import load_config
 from src.stt import SpeechListener
 from src.tts import TTSEngine
@@ -15,6 +15,8 @@ from src.scheduler import Scheduler
 from src.tasks import tuya_sync
 
 log = logging.getLogger(__name__)
+
+IDLE_RESET_SECONDS = 30
 
 
 def build_system_prompt(location: dict, devices: list[dict]) -> str:
@@ -37,6 +39,8 @@ You can control smart home devices and music, but you are also a general-purpose
 class Assistant:
     def __init__(self, config_path: str = "config.yaml"):
         self._config = load_config(config_path)
+        self._role = self._config["role"]
+        self._unit_name = self._config.get("unit_name", "host")
         self._tts = TTSEngine()
         self._listener = SpeechListener(
             self._config["wake_word"],
@@ -44,14 +48,20 @@ class Assistant:
         )
 
         host_port = self._config.get("host_port", 8765)
-        ws_ip = "127.0.0.1" if self._config.get("role") == "host" else self._config.get("host_ip", "127.0.0.1")
+        ws_ip = "127.0.0.1" if self._role == "host" else self._config.get("host_ip", "127.0.0.1")
         self._network = NetworkClient(ws_ip, host_port)
 
-        # Start server if this is the Host
-        if self._config["role"] == "host":
+        self._tuya = None
+        self._spotify = None
+        self._scheduler = None
+        self._ai_clients: dict[str, dict] = {}
+        self._system_prompt = None
+
+        if self._role == "host":
+            action_log.configure()
             t = threading.Thread(
                 target=run_server,
-                kwargs={"host": "0.0.0.0", "port": host_port},
+                kwargs={"host": "0.0.0.0", "port": host_port, "query_handler": self._process_query},
                 daemon=True,
             )
             t.start()
@@ -60,38 +70,35 @@ class Assistant:
 
         location = self._network.get_info()
 
-        # Tuya
-        tuya_cfg = self._config.get("tuya", {})
-        devices = tuya_cfg.get("devices", [])
-        self._tuya = TuyaController(devices)
+        if self._role == "host":
+            tuya_cfg = self._config.get("tuya", {})
+            devices = tuya_cfg.get("devices", [])
+            self._tuya = TuyaController(devices)
 
-        # Spotify
-        spotify_cfg = self._config.get("spotify", {})
-        self._spotify = (
-            SpotifyController(
-                spotify_cfg["client_id"],
-                spotify_cfg["client_secret"],
-                spotify_cfg["redirect_uri"],
+            spotify_cfg = self._config.get("spotify", {})
+            self._spotify = (
+                SpotifyController(
+                    spotify_cfg["client_id"],
+                    spotify_cfg["client_secret"],
+                    spotify_cfg["redirect_uri"],
+                )
+                if spotify_cfg
+                else None
             )
-            if spotify_cfg
-            else None
-        )
+
+            self._system_prompt = build_system_prompt(location, devices)
+
+            self._scheduler = Scheduler()
+            self._scheduler.register(
+                "tuya_sync",
+                lambda: tuya_sync.run(on_complete=self._on_tuya_sync),
+                hour=0,  # midnight
+            )
+            self._scheduler.start()
 
         # WebSocket for house-speaker coordination
         self._network.on_message(self._handle_network_command)
         self._network.start_websocket()
-
-        system_prompt = build_system_prompt(location, devices)
-        self._ai = AIClient(self._config["anthropic_api_key"], system_prompt)
-
-        # Scheduled background tasks
-        self._scheduler = Scheduler()
-        self._scheduler.register(
-            "tuya_sync",
-            lambda: tuya_sync.run(on_complete=self._on_tuya_sync),
-            hour=0,  # midnight
-        )
-        self._scheduler.start()
 
     def _on_tuya_sync(self, updated_devices: list[dict]) -> None:
         """Reload TuyaController after a successful cloud sync."""
@@ -107,11 +114,44 @@ class Assistant:
                 house_speakers=False,
             )
 
-    def _tool_handler(self, tool_name: str, tool_input: dict) -> str:
+    def _get_ai_client(self, unit_name: str) -> AIClient:
+        """Return a per-unit AIClient so different units' conversations never mix."""
+        now = time.time()
+        entry = self._ai_clients.get(unit_name)
+        if entry is None:
+            client = AIClient(self._config["anthropic_api_key"], self._system_prompt)
+            self._ai_clients[unit_name] = {"client": client, "last_active": now}
+            return client
+        if now - entry["last_active"] > IDLE_RESET_SECONDS:
+            entry["client"].reset()
+        entry["last_active"] = now
+        return entry["client"]
+
+    def _reset_conversation(self, unit_name: str) -> None:
+        entry = self._ai_clients.get(unit_name)
+        if entry:
+            entry["client"].reset()
+
+    def _process_query(self, unit_name: str, text: str) -> str:
+        """Handle one query end-to-end. Used for both local (host) and remote (follower) requests."""
+        action_log.log_query(unit_name, text)
+        ai = self._get_ai_client(unit_name)
+        handler = lambda tool_name, tool_input: self._tool_handler(unit_name, tool_name, tool_input)
+        try:
+            response = ai.ask(text, handler)
+        except Exception as e:
+            print(f"[Error] {e}")
+            action_log.log_error(unit_name, "ai_ask", str(e))
+            return "Sorry, something went wrong."
+        action_log.log_response(unit_name, response)
+        return response
+
+    def _tool_handler(self, unit_name: str, tool_name: str, tool_input: dict) -> str:
         print(f"[Tool] {tool_name} called with: {tool_input}")
         if tool_name == "control_tuya_device":
             result = self._tuya.control(tool_input["device_name"], tool_input["action"])
             print(f"[Tool] control_tuya_device result: {result}")
+            action_log.log_tool_call(unit_name, tool_name, tool_input, result)
             return result
 
         if tool_name == "control_spotify" and self._spotify:
@@ -122,6 +162,7 @@ class Assistant:
                 house_speakers=house,
             )
             print(f"[Tool] control_spotify result: {result}")
+            action_log.log_tool_call(unit_name, tool_name, tool_input, result)
             if house:
                 self._network.broadcast({
                     "type": "spotify",
@@ -147,13 +188,12 @@ class Assistant:
                         self._tts.speak("On it.")
                     except Exception as e:
                         print(f"[TTS Error] {e}")
-                    print("[Assistant] Calling Claude...")
-                    try:
-                        response = self._ai.ask(query, self._tool_handler)
-                        print(f"[Assistant] Claude responded: '{response[:80]}'")
-                    except Exception as e:
-                        print(f"[Error] {e}")
-                        response = "Sorry, something went wrong."
+                    print("[Assistant] Processing query...")
+                    if self._role == "host":
+                        response = self._process_query(self._unit_name, query)
+                    else:
+                        response = self._network.query(self._unit_name, query)
+                    print(f"[Assistant] Response: '{response[:80]}'")
                     print("[Assistant] Speaking response...")
                     try:
                         self._tts.speak(response)
@@ -161,7 +201,8 @@ class Assistant:
                         print(f"[TTS Error] {e}")
                     print("[Assistant] Done.")
                     query = self._listener.listen_once(timeout=5)
-                self._ai.reset()
+                if self._role == "host":
+                    self._reset_conversation(self._unit_name)
                 print(f"[Compressor] Listening for wake word '{self._listener.wake_word}'...")
         except KeyboardInterrupt:
             print("\n[Compressor] Shutting down.")
