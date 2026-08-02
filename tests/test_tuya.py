@@ -188,3 +188,68 @@ def test_outlet_device_constructed_with_tight_timeouts(mocker):
     kwargs = mock_device_cls.call_args.kwargs
     assert kwargs.get("connection_timeout", 99) <= 3
     assert kwargs.get("connection_retry_limit", 99) <= 1
+
+
+# --- false-success detection and duplicate-name handling ---
+
+def test_error_payload_from_tinytuya_reported_as_failure(mocker):
+    """tinytuya returns error payloads instead of raising on some failures —
+    a response containing 'Error' must not be reported as success."""
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.turn_on.return_value = {"Error": "Network Error: Unable to Connect", "Err": "901"}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    result = ctrl.control("Good Light", "on")
+
+    assert "turned on" not in result.lower()
+    assert "failed" in result.lower() or "error" in result.lower()
+
+
+def test_success_payload_still_reports_success(mocker):
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.turn_on.return_value = {"dps": {"1": True}}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    result = ctrl.control("Good Light", "on")
+
+    assert "turned on" in result.lower()
+
+
+DUPLICATE_NAME_DEVICES = [
+    {"name": "Office Light 1", "device_id": "dup-a", "local_key": "", "ip": "", "version": 3.3},
+    {"name": "Office Light 1", "device_id": "dup-b", "local_key": "k", "ip": "192.168.0.79", "version": 3.3},
+]
+
+
+def test_duplicate_names_are_not_clobbered(mocker):
+    """Two config entries with the same name must BOTH be kept — controlling
+    that name attempts every entry instead of silently dropping one."""
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.turn_on.return_value = {"dps": {"1": True}}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(DUPLICATE_NAME_DEVICES)
+    result = ctrl.control("Office Light 1", "on")
+
+    # The usable duplicate (dup-b) was controlled...
+    assert mock_device_cls.call_args.kwargs["dev_id"] == "dup-b"
+    assert "turned on" in result.lower()
+    # ...and the unusable one is reported as skipped, not vanished.
+    assert "skipped" in result.lower()
+
+
+def test_duplicate_names_both_counted_in_category(mocker):
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.turn_on.return_value = {"dps": {"1": True}}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(DUPLICATE_NAME_DEVICES)
+    result = ctrl.control("lights", "on")
+
+    assert "2 device(s)" in result

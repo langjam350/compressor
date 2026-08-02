@@ -22,22 +22,37 @@ _CATEGORY_EXPANSION: dict[str, list[str]] = {
 }
 
 
+def _payload_error(payload) -> str | None:
+    """tinytuya returns error payloads instead of raising on many failures."""
+    if isinstance(payload, dict) and payload.get("Error"):
+        return str(payload["Error"])
+    return None
+
+
 class TuyaController:
     def __init__(self, devices: list[dict]):
         # devices: list of {name, device_id, local_key, ip, version}
-        self._devices = {d["name"].lower(): d for d in devices}
+        # Keyed by lowercased name -> LIST of entries: duplicate names are
+        # legitimate (same label reused in the Tuya app) and must not clobber.
+        self._devices: dict[str, list[dict]] = {}
+        for d in devices:
+            self._devices.setdefault(d["name"].lower(), []).append(d)
+
+    def _all_devices(self) -> list[dict]:
+        return [dev for entries in self._devices.values() for dev in entries]
 
     def _find_devices_by_category(self, category: str) -> list[dict]:
         """Return all devices that match a category string such as 'lights' or 'bedroom lights'."""
         if category.strip().lower() == "all":
-            return list(self._devices.values())
+            return self._all_devices()
         terms = category.lower().split()
         return [
-            dev for name, dev in self._devices.items()
+            dev for name, entries in self._devices.items()
             if all(
                 any(exp in name for exp in _CATEGORY_EXPANSION.get(term, [term]))
                 for term in terms
             )
+            for dev in entries
         ]
 
     def _control_single(self, dev: dict, action: str) -> str:
@@ -50,13 +65,22 @@ class TuyaController:
             connection_retry_limit=_CONNECTION_RETRY_LIMIT,
         )
         if action == "on":
-            device.turn_on()
+            resp = device.turn_on()
         elif action == "off":
-            device.turn_off()
+            resp = device.turn_off()
         elif action == "toggle":
             status = device.status()
+            err = _payload_error(status)
+            if err:
+                return f"{dev['name']} failed ({err})."
             is_on = status.get("dps", {}).get("1", False)
-            device.turn_off() if is_on else device.turn_on()
+            resp = device.turn_off() if is_on else device.turn_on()
+        else:
+            return f"{dev['name']}: unknown action '{action}'."
+
+        err = _payload_error(resp)
+        if err:
+            return f"{dev['name']} failed ({err})."
         return f"{dev['name']} turned {action}."
 
     def _safe_control(self, dev: dict, action: str) -> str:
@@ -70,22 +94,26 @@ class TuyaController:
         except Exception as e:
             return f"{dev['name']} failed ({e})."
 
+    def _control_many(self, devices: list[dict], action: str) -> list[str]:
+        with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, len(devices))) as pool:
+            return list(pool.map(lambda d: self._safe_control(d, action), devices))
+
     def control(self, device_name: str, action: str) -> str:
-        # 1. Exact name match
+        # 1. Exact name match — controls every entry sharing that name
         key = device_name.lower()
         if key in self._devices:
-            return self._safe_control(self._devices[key], action)
+            results = self._control_many(self._devices[key], action)
+            return "; ".join(results)
 
         # 2. Category match ("lights", "bedroom lights", "fans", "all", …)
         devices = self._find_devices_by_category(device_name)
         if devices:
-            with ThreadPoolExecutor(max_workers=min(_MAX_PARALLEL, len(devices))) as pool:
-                results = list(pool.map(lambda d: self._safe_control(d, action), devices))
+            results = self._control_many(devices, action)
             return f"Controlled {len(devices)} device(s): " + "; ".join(results)
 
         # 3. Fuzzy name match (substring fallback)
-        for dev_key, dev in self._devices.items():
+        for dev_key, entries in self._devices.items():
             if key in dev_key or dev_key in key:
-                return self._safe_control(dev, action)
+                return "; ".join(self._control_many(entries, action))
 
         return f"Device '{device_name}' not found. Check your config.yaml device list."
