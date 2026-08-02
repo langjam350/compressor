@@ -1,13 +1,13 @@
-# Condensor
+# Compressor
 
-A voice-activated home assistant that controls smart devices and Spotify across multiple machines on your LAN. Say the wake word, give a command — Condensor handles the rest.
+A voice-activated home assistant that controls smart devices and Spotify across multiple machines on your LAN. Say the wake word, give a command — Compressor handles the rest.
 
 **Features**
-- Wake-word activation ("condensor" by default)
+- Wake-word activation ("compressor" by default)
 - Natural language via Claude AI
 - Tuya smart device control (lights, plugs, fans, etc.)
 - Spotify playback control, including house-wide speaker sync
-- Multi-room support: one Host machine, unlimited Client machines
+- Multi-room support: one Host machine, unlimited Follower machines
 
 ---
 
@@ -16,22 +16,24 @@ A voice-activated home assistant that controls smart devices and Spotify across 
 ```
 [Host machine]  ←──── runs FastAPI server (port 8765)
     │                  handles AI, Tuya, Spotify
-    │                  broadcasts commands to clients via WebSocket
+    │                  broadcasts commands to followers via WebSocket
     │
-    └──── [Client machine]  ←── listens for wake word
-    └──── [Client machine]  ←── plays back Spotify on local device
+    └──── [Follower machine]  ←── listens for wake word
+    └──── [Follower machine]  ←── plays back Spotify on local device
 ```
 
-The **Host** runs the AI and integration logic. **Clients** connect to it over WebSocket and receive playback commands so that "play everywhere" works across all speakers in the house.
+The **Host** runs the AI and integration logic and is the only machine that needs an Anthropic API key — **Followers** hold zero Anthropic credentials. A Follower captures a spoken command, sends it to the Host over `POST /query` (`{unit_name, text}` in, `{response}` out), and speaks back whatever the Host returns. Followers also stay connected to the Host over WebSocket so that "play everywhere" commands can be broadcast to every speaker in the house.
+
+Note: the Host keeps each unit's conversation history in memory only. Restarting the Host clears all in-progress conversation context for every unit — a follow-up like "what about the bedroom?" won't be understood as a continuation after a Host restart.
 
 ---
 
 ## Requirements
 
 - Python 3.11+
-- Microphone on each machine running Condensor
+- Microphone on each machine running Compressor
 - All machines on the same LAN
-- [Anthropic API key](https://console.anthropic.com)
+- [Anthropic API key](https://console.anthropic.com) — Host only
 - Tuya IoT account (for smart device control)
 - Spotify Developer app (for music control)
 
@@ -39,7 +41,7 @@ The **Host** runs the AI and integration logic. **Clients** connect to it over W
 
 ## Installation
 
-Run this on **every machine** (host and clients):
+Run this on **every machine** (host and followers):
 
 ```bash
 pip install -r requirements.txt
@@ -59,7 +61,7 @@ cp config.example.yaml config.yaml
 
 ```yaml
 role: host
-wake_word: condensor
+wake_word: compressor
 
 anthropic_api_key: sk-ant-...
 
@@ -77,18 +79,21 @@ spotify:
   redirect_uri: http://localhost:8888/callback
 ```
 
-### Client config (`config.yaml`)
+`anthropic_api_key` is required on the Host and is host-only — Followers never need one.
+
+### Follower config (`config.yaml`)
 
 ```yaml
-role: client
-wake_word: condensor
+role: follower
+wake_word: compressor
 host_ip: 192.168.1.100    # LAN IP of the Host machine
 host_port: 8765
 
-anthropic_api_key: sk-ant-...
+unit_name: Kitchen         # required — identifies this unit to the Host and
+                            # attributes host-side action-log entries to it
 ```
 
-Clients do **not** need Tuya or Spotify config — those run on the Host only.
+Followers do **not** need Tuya, Spotify, or an `anthropic_api_key` in their config — those run on the Host only. `unit_name` is required for every Follower and should be unique per unit.
 
 ---
 
@@ -145,20 +150,20 @@ py main.py
 
 The host starts its FastAPI server on port 8765, then waits for the wake word.
 
-### Client
+### Follower
 
 ```bash
 py main.py
 ```
 
-Same command. The `role: client` in your config tells it to connect to the host instead of starting a server.
+Same command. The `role: follower` in your config tells it to connect to the host instead of starting a server.
 
 ### Firewall (Windows)
 
-The host needs port 8765 open for client connections:
+The host needs port 8765 open for follower connections:
 
 ```powershell
-netsh advfirewall firewall add rule name="Condensor" dir=in action=allow protocol=TCP localport=8765
+netsh advfirewall firewall add rule name="Compressor" dir=in action=allow protocol=TCP localport=8765
 ```
 
 ---
@@ -189,6 +194,6 @@ Say the wake word to activate, then speak your command:
 
 **Spotify "No devices found"** — Spotify must be open and active on at least one device before issuing a play command.
 
-**Client can't connect to host** — Confirm `host_ip` in the client config matches the host's LAN IP (`ipconfig` on Windows). Check the firewall rule above.
+**Follower can't connect to host** — Confirm `host_ip` in the follower config matches the host's LAN IP (`ipconfig` on Windows). Check the firewall rule above.
 
 **Wake word not detected** — Check that your microphone is set as the default input device in your OS audio settings.

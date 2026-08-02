@@ -74,5 +74,6 @@ def run_server(
     port: int = 8765,
     query_handler: Optional[Callable[[str, str], str]] = None,
 ):
-    app.state.query_handler = query_handler
+    if query_handler is not None:
+        app.state.query_handler = query_handler
     uvicorn.run(app, host=host, port=port, log_level="warning")

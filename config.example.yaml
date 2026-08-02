@@ -6,14 +6,18 @@ wake_word: compressor
 
 # Required when role is "follower" — a human-readable name for this unit,
 # used to attribute host-side action-log entries and identify this unit
-# to the host.
-unit_name: Living Room
+# to the host. Omit (or leave unset) on the host itself — the host does not
+# need a unit_name, and setting one here (e.g. copying a follower's name
+# verbatim) risks colliding with an actual follower unit of the same name.
+# unit_name: Living Room
 
 # Only required when role is "follower" — the Host machine's LAN IP
 host_ip: 192.168.1.100
 host_port: 8765
 
-# Anthropic API key (https://console.anthropic.com)
+# Anthropic API key (https://console.anthropic.com) — only required when
+# role is "host". Followers do not hold Anthropic credentials; they send
+# queries to the host, which is the only unit that talks to the Anthropic API.
 anthropic_api_key: YOUR_ANTHROPIC_API_KEY_HERE
 
 # Tuya IoT devices

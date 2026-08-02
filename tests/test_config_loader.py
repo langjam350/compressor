@@ -49,3 +49,25 @@ def test_load_config_follower_with_host_ip_and_unit_name_succeeds(tmp_path):
     result = load_config(path)
     assert result["role"] == "follower"
     assert result["unit_name"] == "Kitchen"
+
+
+def test_load_config_host_requires_anthropic_api_key(tmp_path):
+    path = write_config(tmp_path, "role: host\nwake_word: compressor\n")
+    from src.config_loader import load_config, ConfigError
+    with pytest.raises(ConfigError, match="anthropic_api_key"):
+        load_config(path)
+
+
+def test_load_config_follower_without_anthropic_api_key_succeeds(tmp_path):
+    path = write_config(tmp_path, "role: follower\nwake_word: compressor\nhost_ip: 192.168.1.100\nunit_name: Kitchen\n")
+    from src.config_loader import load_config
+    result = load_config(path)
+    assert result["role"] == "follower"
+    assert "anthropic_api_key" not in result
+
+
+def test_load_config_invalid_role_raises(tmp_path):
+    path = write_config(tmp_path, "role: bogus\nwake_word: compressor\n")
+    from src.config_loader import load_config, ConfigError
+    with pytest.raises(ConfigError, match="Invalid role"):
+        load_config(path)

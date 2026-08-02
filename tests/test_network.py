@@ -63,7 +63,7 @@ def test_network_client_query_returns_response(mocker):
     mock_post.assert_called_once_with(
         "http://192.168.1.100:8765/query",
         json={"unit_name": "Kitchen", "text": "turn on the living room light"},
-        timeout=15.0,
+        timeout=60.0,
     )
 
 

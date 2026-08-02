@@ -27,7 +27,7 @@ class NetworkClient:
             resp = httpx.post(
                 f"{self._base}/query",
                 json={"unit_name": unit_name, "text": text},
-                timeout=15.0,
+                timeout=60.0,
             )
             return resp.json()["response"]
         except Exception:

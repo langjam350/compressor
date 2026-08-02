@@ -44,7 +44,7 @@ class Assistant:
         self._tts = TTSEngine()
         self._listener = SpeechListener(
             self._config["wake_word"],
-            on_wake=lambda: self._tts.speak("Yes?"),
+            on_wake=self._on_wake,
         )
 
         host_port = self._config.get("host_port", 8765)
@@ -109,6 +109,11 @@ class Assistant:
         self._network.on_message(self._handle_network_command)
         self._network.start_websocket()
 
+    def _on_wake(self) -> None:
+        self._tts.speak("Yes?")
+        if self._role == "host":
+            action_log.log_wake(self._unit_name)
+
     def _on_tuya_sync(self, updated_devices: list[dict]) -> None:
         """Reload TuyaController after a successful cloud sync."""
         self._tuya = TuyaController(updated_devices)
@@ -172,6 +177,9 @@ class Assistant:
                 print(f"[Error] {e}")
                 action_log.log_error(unit_name, "ai_ask", str(e))
                 return "Sorry, something went wrong."
+            entry = self._ai_clients.get(unit_name)
+            if entry is not None:
+                entry["last_active"] = time.time()
             action_log.log_response(unit_name, response)
             return response
 
