@@ -91,7 +91,9 @@ Google cloud-STT transcripts) was unreliable.
 ## 5. Action logging (host only)
 
 - New module `src/action_log.py`: wraps Python's `logging` module with a
-  rotating file handler writing JSON Lines to `logs/actions.jsonl`. One
+  rotating file handler writing JSON Lines to a plain `.txt` file,
+  `logs/actions.txt`, in this repo on the host (no SQLite or other DB —
+  a text file is sufficient). One
   function per event type:
   - `log_wake(unit_name)`
   - `log_query(unit_name, text)`
