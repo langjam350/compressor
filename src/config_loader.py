@@ -15,7 +15,10 @@ def load_config(path: str = "config.yaml") -> dict:
         if key not in config:
             raise ConfigError(f"Missing required config key: '{key}'")
 
-    if config["role"] == "client" and "host_ip" not in config:
-        raise ConfigError("Clients must specify 'host_ip' in config")
+    if config["role"] == "follower":
+        if "host_ip" not in config:
+            raise ConfigError("Followers must specify 'host_ip' in config")
+        if "unit_name" not in config:
+            raise ConfigError("Followers must specify 'unit_name' in config")
 
     return config

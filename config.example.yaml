@@ -1,10 +1,15 @@
-# Role of this machine: "host" (desktop) or "client" (laptop)
+# Role of this machine: "host" (one per system) or "follower" (any other unit)
 role: host
 
 # Wake word spoken to activate the assistant
 wake_word: compressor
 
-# Only required when role is "client" — the Host machine's LAN IP
+# Required when role is "follower" — a human-readable name for this unit,
+# used to attribute host-side action-log entries and identify this unit
+# to the host.
+unit_name: Living Room
+
+# Only required when role is "follower" — the Host machine's LAN IP
 host_ip: 192.168.1.100
 host_port: 8765
 
