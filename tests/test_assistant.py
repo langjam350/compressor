@@ -35,6 +35,7 @@ def _make_assistant(mocker, listener_queries, listen_once_returns):
     mocker.patch("src.assistant.time.sleep")
     mocker.patch("src.assistant.TuyaController")
     mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
 
     from src.assistant import Assistant
     return Assistant(), mock_ai, mock_listener
@@ -99,6 +100,7 @@ def test_assistant_passes_on_wake_to_listener(mocker):
     mocker.patch("src.assistant.AIClient")
     mocker.patch("src.assistant.TuyaController")
     mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
 
     from src.assistant import Assistant
     Assistant()
@@ -195,6 +197,7 @@ def test_host_isolates_conversations_per_unit(mocker):
     mocker.patch("src.assistant.time.sleep")
     mocker.patch("src.assistant.TuyaController")
     mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
 
     mock_ai_cls = mocker.patch("src.assistant.AIClient")
     mock_ai_cls.side_effect = lambda *a, **k: mocker.MagicMock()
@@ -209,6 +212,73 @@ def test_host_isolates_conversations_per_unit(mocker):
     assert client_a is not client_b
     assert client_a is client_a_again
     assert mock_ai_cls.call_count == 2
+
+
+def test_query_handler_wired_only_after_host_state_ready(mocker):
+    """app.state.query_handler must not be set until all host-only state
+    (tuya/spotify/scheduler/system_prompt) is fully constructed, and the
+    background server thread must not be handed a handler that could touch
+    that state early — this was the fix for a race where a follower query
+    landing during startup would permanently poison that unit's AIClient
+    with system_prompt=None."""
+    mocker.patch("src.assistant.load_config", return_value={
+        "wake_word": "compressor",
+        "role": "host",
+        "host_port": 8765,
+        "anthropic_api_key": "test-key",
+        "tuya": {},
+        "spotify": {},
+    })
+    mocker.patch("src.assistant.TTSEngine", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.SpeechListener", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.NetworkClient")
+    mock_thread_cls = mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.AIClient")
+    mocker.patch("src.assistant.TuyaController")
+    mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
+
+    from src.assistant import Assistant, app
+    app.state.query_handler = None  # reset in case a prior test left it set
+
+    assistant = Assistant()
+
+    thread_kwargs = mock_thread_cls.call_args.kwargs["kwargs"]
+    assert "query_handler" not in thread_kwargs
+
+    assert app.state.query_handler == assistant._process_query
+
+
+def test_process_query_holds_unit_lock_during_ai_ask(mocker):
+    """_process_query must hold the per-unit lock for the whole ai.ask() call
+    so two concurrent requests for the same unit can't interleave writes to
+    the same AIClient's message history."""
+    assistant, mock_ai, _ = _make_assistant(mocker, listener_queries=[], listen_once_returns=[])
+
+    lock = assistant._get_unit_lock("host")
+
+    def check_locked_and_answer(*args, **kwargs):
+        assert lock.locked()
+        return "ok"
+
+    mock_ai.ask.side_effect = check_locked_and_answer
+
+    result = assistant._process_query("host", "hello")
+
+    assert result == "ok"
+    assert not lock.locked()
+
+
+def test_get_unit_lock_returns_same_lock_per_unit(mocker):
+    assistant, _, _ = _make_assistant(mocker, listener_queries=[], listen_once_returns=[])
+
+    lock_a = assistant._get_unit_lock("Kitchen")
+    lock_a_again = assistant._get_unit_lock("Kitchen")
+    lock_b = assistant._get_unit_lock("Living Room")
+
+    assert lock_a is lock_a_again
+    assert lock_a is not lock_b
 
 
 def test_process_query_logs_query_and_response(mocker):
