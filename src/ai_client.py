@@ -73,6 +73,7 @@ class AIClient:
                 messages=list(self._messages),
             )
 
+            print(f"[AI] stop_reason={response.stop_reason}")
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for block in response.content:

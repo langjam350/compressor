@@ -22,7 +22,7 @@ def build_system_prompt(location: dict, devices: list[dict]) -> str:
     city = location.get("city", "Unknown")
     region = location.get("region", "Unknown")
     tz = location.get("timezone", "Unknown")
-    return f"""You are Condensor, a friendly home voice assistant. Your responses will be spoken aloud, so:
+    return f"""You are Condensor, a friendly AI voice assistant for the home. Your responses will be spoken aloud, so:
 - Be concise (1-3 sentences unless the user asks for detail)
 - Avoid markdown, bullet points, or formatting
 - Speak naturally
@@ -30,7 +30,7 @@ def build_system_prompt(location: dict, devices: list[dict]) -> str:
 Current location: {city}, {region} (timezone: {tz})
 Registered smart home devices: {device_names}
 
-When the user asks to control a device or play music, call the appropriate tool, then briefly confirm the action.
+You can control smart home devices and music, but you are also a general-purpose AI assistant. Answer any question the user asks — cooking, trivia, advice, facts, recommendations — just like a knowledgeable friend would. Only use tools when the user wants to control a device or play music.
 """
 
 
@@ -108,8 +108,11 @@ class Assistant:
             )
 
     def _tool_handler(self, tool_name: str, tool_input: dict) -> str:
+        print(f"[Tool] {tool_name} called with: {tool_input}")
         if tool_name == "control_tuya_device":
-            return self._tuya.control(tool_input["device_name"], tool_input["action"])
+            result = self._tuya.control(tool_input["device_name"], tool_input["action"])
+            print(f"[Tool] control_tuya_device result: {result}")
+            return result
 
         if tool_name == "control_spotify" and self._spotify:
             house = tool_input.get("house_speakers", False)
@@ -118,6 +121,7 @@ class Assistant:
                 tool_input.get("query"),
                 house_speakers=house,
             )
+            print(f"[Tool] control_spotify result: {result}")
             if house:
                 self._network.broadcast({
                     "type": "spotify",
@@ -126,6 +130,7 @@ class Assistant:
                 })
             return result
 
+        print(f"[Tool] Unknown or unconfigured tool: {tool_name}")
         return "Integration not configured."
 
     def run(self):
