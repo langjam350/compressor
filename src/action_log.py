@@ -17,6 +17,7 @@ def configure(log_path: str = "logs/actions.txt") -> None:
     logger.setLevel(logging.INFO)
     logger.propagate = False
     for handler in list(logger.handlers):
+        handler.close()
         logger.removeHandler(handler)
 
     handler = logging.handlers.RotatingFileHandler(
