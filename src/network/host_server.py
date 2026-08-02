@@ -46,9 +46,9 @@ def query_endpoint(req: QueryRequest):
         return QueryResponse(response="Host is not ready to process queries yet.")
     try:
         result = handler(req.unit_name, req.text)
+        return QueryResponse(response=str(result) if result is not None else "Sorry, something went wrong.")
     except Exception:
-        result = "Sorry, something went wrong."
-    return QueryResponse(response=result)
+        return QueryResponse(response="Sorry, something went wrong.")
 
 
 @app.websocket("/ws")

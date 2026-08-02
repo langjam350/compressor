@@ -112,3 +112,18 @@ def test_query_endpoint_catches_handler_exceptions():
 
     assert resp.status_code == 200
     assert resp.json()["response"] == "Sorry, something went wrong."
+
+
+def test_query_endpoint_coerces_non_string_result_to_string():
+    from src.network.host_server import app
+
+    def returns_none(unit_name, text):
+        return None
+
+    app.state.query_handler = returns_none
+    client = TestClient(app)
+
+    resp = client.post("/query", json={"unit_name": "Kitchen", "text": "turn on the lights"})
+
+    assert resp.status_code == 200
+    assert resp.json()["response"] == "Sorry, something went wrong."
