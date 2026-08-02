@@ -45,6 +45,8 @@ class Assistant:
         self._listener = SpeechListener(
             self._config["wake_word"],
             on_wake=self._on_wake,
+            wake_model_path=self._config.get("wake_model_path", "models/compressor.onnx"),
+            wake_threshold=float(self._config.get("wake_threshold", 0.5)),
         )
 
         host_port = self._config.get("host_port", 8765)

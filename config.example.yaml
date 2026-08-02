@@ -4,6 +4,15 @@ role: host
 # Wake word spoken to activate the assistant
 wake_word: compressor
 
+# Wake-word detection engine (openWakeWord). When the trained model file
+# exists at wake_model_path, streaming on-device detection is used —
+# faster and far more reliable than the cloud-STT fallback. Train it once
+# via docs/WAKE-WORD-TRAINING.md, drop the .onnx here, restart.
+# wake_threshold: detection sensitivity 0-1; lower = more sensitive but
+# more false wakes. 0.5 is a good starting point.
+wake_model_path: models/compressor.onnx
+wake_threshold: 0.5
+
 # Required when role is "follower" — a human-readable name for this unit,
 # used to attribute host-side action-log entries and identify this unit
 # to the host. Omit (or leave unset) on the host itself — the host does not

@@ -313,3 +313,34 @@ def test_process_query_logs_query_and_response(mocker):
     assert result == "Living Room Light turned on."
     mock_log_query.assert_called_once_with("host", "turn on the living room light")
     mock_log_response.assert_called_once_with("host", "Living Room Light turned on.")
+
+
+def test_assistant_passes_wake_model_config_to_listener(mocker):
+    """wake_model_path / wake_threshold from config.yaml reach SpeechListener."""
+    mocker.patch("src.assistant.load_config", return_value={
+        "wake_word": "compressor",
+        "role": "host",
+        "host_port": 8765,
+        "anthropic_api_key": "test-key",
+        "wake_model_path": "models/custom.onnx",
+        "wake_threshold": 0.7,
+        "tuya": {},
+        "spotify": {},
+    })
+    mocker.patch("src.assistant.TTSEngine", return_value=mocker.MagicMock())
+    mock_listener_cls = mocker.patch("src.assistant.SpeechListener")
+    mocker.patch("src.assistant.NetworkClient")
+    mocker.patch("src.assistant.run_server")
+    mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.AIClient")
+    mocker.patch("src.assistant.TuyaController")
+    mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
+
+    from src.assistant import Assistant
+    Assistant()
+
+    kwargs = mock_listener_cls.call_args.kwargs
+    assert kwargs["wake_model_path"] == "models/custom.onnx"
+    assert kwargs["wake_threshold"] == 0.7
