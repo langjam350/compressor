@@ -75,3 +75,40 @@ def test_network_client_query_on_failure_returns_fallback(mocker):
     result = client.query("Kitchen", "turn on the living room light")
 
     assert result == "Sorry, I can't reach the host right now."
+
+
+def test_query_endpoint_calls_query_handler_and_returns_result():
+    from src.network.host_server import app
+    app.state.query_handler = lambda unit_name, text: f"handled {unit_name}: {text}"
+    client = TestClient(app)
+
+    resp = client.post("/query", json={"unit_name": "Kitchen", "text": "turn on the lights"})
+
+    assert resp.status_code == 200
+    assert resp.json()["response"] == "handled Kitchen: turn on the lights"
+
+
+def test_query_endpoint_returns_apology_when_handler_not_set():
+    from src.network.host_server import app
+    app.state.query_handler = None
+    client = TestClient(app)
+
+    resp = client.post("/query", json={"unit_name": "Kitchen", "text": "turn on the lights"})
+
+    assert resp.status_code == 200
+    assert "not ready" in resp.json()["response"]
+
+
+def test_query_endpoint_catches_handler_exceptions():
+    from src.network.host_server import app
+
+    def boom(unit_name, text):
+        raise RuntimeError("ai exploded")
+
+    app.state.query_handler = boom
+    client = TestClient(app)
+
+    resp = client.post("/query", json={"unit_name": "Kitchen", "text": "turn on the lights"})
+
+    assert resp.status_code == 200
+    assert resp.json()["response"] == "Sorry, something went wrong."
