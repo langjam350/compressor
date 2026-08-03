@@ -253,3 +253,47 @@ def test_duplicate_names_both_counted_in_category(mocker):
     result = ctrl.control("lights", "on")
 
     assert "2 device(s)" in result
+
+
+# --- bulb switch DPS (Tuya bulbs switch on DPS 20, not the outlet default 1) ---
+
+BULB_DEVICES = [
+    {"name": "Bulb", "device_id": "bulb1", "local_key": "k", "ip": "192.168.0.10", "version": 3.5, "switch_dps": 20},
+]
+
+
+def test_turn_on_uses_configured_switch_dps(mocker):
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.turn_on.return_value = {"dps": {"20": True}}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(BULB_DEVICES)
+    ctrl.control("Bulb", "on")
+
+    mock_inst.turn_on.assert_called_once_with(switch=20)
+
+
+def test_toggle_reads_configured_switch_dps(mocker):
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.status.return_value = {"dps": {"20": True}}
+    mock_inst.turn_off.return_value = {"dps": {"20": False}}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(BULB_DEVICES)
+    ctrl.control("Bulb", "toggle")
+
+    mock_inst.turn_off.assert_called_once_with(switch=20)
+
+
+def test_switch_dps_defaults_to_1_when_absent(mocker):
+    mock_device_cls = mocker.patch("src.integrations.tuya.tinytuya.OutletDevice")
+    mock_inst = mock_device_cls.return_value
+    mock_inst.turn_on.return_value = {"dps": {"1": True}}
+
+    from src.integrations.tuya import TuyaController
+    ctrl = TuyaController(MIXED_DEVICES)
+    ctrl.control("Good Light", "on")
+
+    mock_inst.turn_on.assert_called_once_with(switch=1)

@@ -64,17 +64,20 @@ class TuyaController:
             connection_timeout=_CONNECTION_TIMEOUT,
             connection_retry_limit=_CONNECTION_RETRY_LIMIT,
         )
+        # Tuya bulbs put their power switch on DPS 20 (switch_led); outlets
+        # use DPS 1. The wrong index gets ACKed but changes nothing.
+        switch_dps = int(dev.get("switch_dps", 1))
         if action == "on":
-            resp = device.turn_on()
+            resp = device.turn_on(switch=switch_dps)
         elif action == "off":
-            resp = device.turn_off()
+            resp = device.turn_off(switch=switch_dps)
         elif action == "toggle":
             status = device.status()
             err = _payload_error(status)
             if err:
                 return f"{dev['name']} failed ({err})."
-            is_on = status.get("dps", {}).get("1", False)
-            resp = device.turn_off() if is_on else device.turn_on()
+            is_on = status.get("dps", {}).get(str(switch_dps), False)
+            resp = device.turn_off(switch=switch_dps) if is_on else device.turn_on(switch=switch_dps)
         else:
             return f"{dev['name']}: unknown action '{action}'."
 
