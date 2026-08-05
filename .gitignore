@@ -218,3 +218,4 @@ devices.json
 snapshot.json
 tuya-raw.json
 programs_learned.yaml
+*.bak
