@@ -8,6 +8,8 @@ from src.stt import SpeechListener
 from src.tts import TTSEngine
 from src.ai_client import AIClient
 from src.tools import TOOLS
+from src.actions import ACTIONS
+from src.actions.context import ActionContext
 from src.integrations.tuya import TuyaController
 from src.integrations.spotify import SpotifyController
 from src.network.host_server import app, run_server
@@ -188,31 +190,26 @@ class Assistant:
 
     def _tool_handler(self, unit_name: str, tool_name: str, tool_input: dict) -> str:
         print(f"[Tool] {tool_name} called with: {tool_input}")
-        if tool_name == "control_tuya_device":
-            result = self._tuya.control(tool_input["device_name"], tool_input["action"])
-            print(f"[Tool] control_tuya_device result: {result}")
-            action_log.log_tool_call(unit_name, tool_name, tool_input, result)
-            return result
-
-        if tool_name == "control_spotify" and self._spotify:
-            house = tool_input.get("house_speakers", False)
-            result = self._spotify.control(
-                tool_input["action"],
-                tool_input.get("query"),
-                house_speakers=house,
-            )
-            print(f"[Tool] control_spotify result: {result}")
-            action_log.log_tool_call(unit_name, tool_name, tool_input, result)
-            if house:
-                self._network.broadcast({
-                    "type": "spotify",
-                    "action": tool_input["action"],
-                    "query": tool_input.get("query"),
-                })
-            return result
-
-        print(f"[Tool] Unknown or unconfigured tool: {tool_name}")
-        return "Integration not configured."
+        action = ACTIONS.get(tool_name)
+        if action is None:
+            print(f"[Tool] Unknown or unconfigured tool: {tool_name}")
+            return "Integration not configured."
+        ctx = ActionContext(
+            unit_name=unit_name,
+            tuya=self._tuya,
+            spotify=self._spotify,
+            launcher=getattr(self, "_launcher", None),
+            network=self._network,
+            config=self._config,
+            host_unit_name=self._unit_name,
+        )
+        try:
+            result = action(ctx, tool_input)
+        except Exception as e:
+            result = f"Tool {tool_name} failed ({e})."
+        print(f"[Tool] {tool_name} result: {result}")
+        action_log.log_tool_call(unit_name, tool_name, tool_input, result)
+        return result
 
     def run(self):
         try:
