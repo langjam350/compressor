@@ -412,3 +412,14 @@ def test_network_open_program_for_other_unit_ignored(mocker):
     })
 
     assistant._launcher.open.assert_not_called()
+
+
+def test_follower_constructs_program_launcher(mocker):
+    """ProgramLauncher must exist on ALL roles — followers execute remote launches locally."""
+    mock_launcher_cls = mocker.patch("src.assistant.ProgramLauncher")
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    mock_launcher_cls.assert_called_once()
+    assert assistant._launcher is mock_launcher_cls.return_value
+    assert mock_launcher_cls.call_args.kwargs.get("unit_name") == "Kitchen"
