@@ -208,17 +208,25 @@ class Assistant:
     def _parse_claude_mode_entry(self, text: str) -> str | None:
         """Return '' for bare 'start claude', the project name for
         'start claude in <name>', or None if this isn't an entry phrase."""
-        match = _CLAUDE_ENTRY_RE.match(text)
+        match = _CLAUDE_ENTRY_RE.match(text.strip().strip(".,!?"))
         if not match:
             return None
         return (match.group("name") or "").strip()
+
+    def _speak_safe(self, text: str) -> None:
+        """Same defensive pattern as run()'s TTS calls: a dead TTS subprocess
+        must not kill the mode or mask session cleanup."""
+        try:
+            self._tts.speak(text)
+        except Exception as e:
+            print(f"[TTS Error] {e}")
 
     def _run_claude_mode(self, target_name: str) -> None:
         """Route speech into a coding-agent session until the wake word
         is spoken ALONE (the universal escape), or idle timeout."""
         cfg = self._config.get("coding_agent")
         if not cfg or not cfg.get("default_workdir"):
-            self._tts.speak("Claude mode isn't configured on this unit.")
+            self._speak_safe("Claude mode isn't configured on this unit.")
             return
 
         workdir = cfg["default_workdir"]
@@ -226,42 +234,42 @@ class Assistant:
             workdirs = {k.lower(): v for k, v in (cfg.get("workdirs") or {}).items()}
             workdir = workdirs.get(target_name.lower())
             if workdir is None:
-                self._tts.speak(f"I don't have a project called {target_name}.")
+                self._speak_safe(f"I don't have a project called {target_name}.")
                 return
 
         session = create_session(cfg)
-        session.start(workdir)
-        self._tts.speak("Starting Claude.")
-        if self._role == "host":
-            action_log.log_claude_mode(self._unit_name, "enter", workdir)
-        print(f"[Compressor] Claude mode: {workdir} — say '{self._listener.wake_word}' alone to exit.")
-
-        idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
         try:
+            session.start(workdir)
+            self._speak_safe("Starting Claude.")
+            if self._role == "host":
+                action_log.log_claude_mode(self._unit_name, "enter", workdir)
+            print(f"[Compressor] Claude mode: {workdir} — say '{self._listener.wake_word}' alone to exit.")
+
+            idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
             while True:
-                utterance = self._listener.listen_once(timeout=CLAUDE_MODE_LISTEN_TIMEOUT)
+                utterance = self._listener.listen_once(timeout=CLAUDE_MODE_LISTEN_TIMEOUT, phrase_time_limit=30)
                 if not utterance:
                     if time.time() >= idle_deadline:
-                        self._tts.speak("Claude mode timed out.")
+                        self._speak_safe("Claude mode timed out.")
                         break
+                    time.sleep(1)
                     continue
                 # Escape rule: wake word ALONE exits; embedded passes through.
                 if utterance.strip().strip(".,!?").lower() == self._listener.wake_word:
                     break
-                idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
                 print(f"[Claude] > {utterance}")
-                self._tts.speak("Working on it.")
+                self._speak_safe("Working on it.")
                 response = session.send(utterance)
                 if self._role == "host":
                     action_log.log_claude_mode(self._unit_name, "exchange", f"{utterance} -> {response[:200]}")
                 print(f"[Claude] {response}")
-                self._tts.speak(response)
+                self._speak_safe(response)
                 idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
         finally:
             session.stop()
             if self._role == "host":
                 action_log.log_claude_mode(self._unit_name, "exit", workdir)
-            self._tts.speak("Compressor ready.")
+            self._speak_safe("Compressor ready.")
 
     def _process_query(self, unit_name: str, text: str) -> str:
         """Handle one query end-to-end. Used for both local (host) and remote (follower) requests."""

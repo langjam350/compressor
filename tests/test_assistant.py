@@ -475,16 +475,19 @@ CODING_AGENT_CFG = {
 }
 
 
-def _make_claude_mode_assistant(mocker, listener_queries, listen_once_returns, coding_agent=True):
-    """Host assistant with a mocked coding-agent session factory."""
+def _make_claude_mode_assistant(mocker, listener_queries, listen_once_returns, coding_agent=True, role="host"):
+    """Host (or follower) assistant with a mocked coding-agent session factory."""
     config = {
         "wake_word": "compressor",
-        "role": "host",
+        "role": role,
         "host_port": 8765,
         "anthropic_api_key": "test-key",
         "tuya": {},
         "spotify": {},
     }
+    if role == "follower":
+        config["host_ip"] = "192.168.1.50"
+        config["unit_name"] = "Kitchen"
     if coding_agent:
         config["coding_agent"] = dict(CODING_AGENT_CFG)
     mocker.patch("src.assistant.load_config", return_value=config)
@@ -620,3 +623,37 @@ def test_mode_utterances_never_reach_normal_ai(mocker):
 
     mock_process.assert_not_called()
     mock_session.send.assert_called_once_with("what is 2 plus 2")
+
+
+def test_follower_role_gets_claude_mode_without_host_logging(mocker):
+    assistant, mock_session, mock_factory, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["compressor"],
+        role="follower",
+    )
+    mock_log_claude_mode = mocker.patch("src.assistant.action_log.log_claude_mode")
+
+    assistant.run()
+
+    mock_factory.assert_called_once()
+    mock_session.start.assert_called_once_with("C:\\git\\compressor")
+    mock_session.stop.assert_called_once()
+    mock_tts.speak.assert_any_call("Compressor ready.")
+    mock_log_claude_mode.assert_not_called()
+
+
+def test_mode_exchange_and_lifecycle_are_action_logged(mocker):
+    assistant, mock_session, _, _ = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["do a thing", "compressor"],
+    )
+    mock_log_claude_mode = mocker.patch("src.assistant.action_log.log_claude_mode")
+
+    assistant.run()
+
+    mode_events = [call.args[1] for call in mock_log_claude_mode.call_args_list]
+    assert mode_events == ["enter", "exchange", "exit"]
+    assert mock_log_claude_mode.call_args_list[0].args[0] == "host"
+    assert mock_log_claude_mode.call_args_list[1].args[2] == "do a thing -> Task complete."
