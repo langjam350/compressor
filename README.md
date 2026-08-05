@@ -43,6 +43,8 @@ Wake-word detection runs locally on every unit via [openWakeWord](https://github
 
 Note: the Host keeps each unit's conversation history in memory only. Restarting the Host clears all in-progress conversation context for every unit — a follow-up like "what about the bedroom?" won't be understood as a continuation after a Host restart.
 
+The Host also writes a running log of every wake, query, tool call, and error across all units to `logs/actions.txt`, tagged by `unit_name`.
+
 ---
 
 ## Requirements
@@ -94,6 +96,9 @@ tuya:
       local_key: xxxxxxxxxxxx
       ip: 192.168.1.50
       version: 3.3
+      switch_dps: 20    # the DP index the power switch lives on. Bulbs use
+                         # 20 (switch_led); plugs/outlets are typically 1
+                         # (the default when switch_dps is omitted).
 
 spotify:
   client_id: YOUR_SPOTIFY_CLIENT_ID
@@ -262,6 +267,8 @@ Commands are always handled by the unit you spoke to — an "open a program" com
 **"Device not found"** — Check that the device name in your command loosely matches the name in `config.yaml`. Matching is fuzzy (substring).
 
 **"Program isn't configured on \<unit\>"** — Add a `programs:` entry for it in that unit's `config.yaml` (see "Programs by voice" above). Each unit only knows the programs listed in its own config plus anything it has learned into `programs_learned.yaml`.
+
+**Device says it turned on but nothing happened** — Wrong `switch_dps`. Tuya devices ACK the command and report success even when it targets the wrong data point, so this fails silently. Bulbs are usually `switch_dps: 20`; plugs/outlets are usually `1` (the default if you omit the field). See Step 2 below to confirm via the `tinytuya` wizard.
 
 **Tuya error 1106 "permission deny"** — Your IoT project doesn't have the device linked. Follow Step 2 in the Tuya setup section above to link your Smart Life account.
 
