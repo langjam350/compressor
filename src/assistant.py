@@ -23,11 +23,20 @@ log = logging.getLogger(__name__)
 IDLE_RESET_SECONDS = 30
 
 
-def build_system_prompt(location: dict, devices: list[dict]) -> str:
+def build_system_prompt(location: dict, devices: list[dict], programs: list[dict] | None = None) -> str:
     device_names = ", ".join(d["name"] for d in devices) if devices else "none"
     city = location.get("city", "Unknown")
     region = location.get("region", "Unknown")
     tz = location.get("timezone", "Unknown")
+
+    program_lines = []
+    for p in programs or []:
+        aliases = f" (aliases: {', '.join(p['aliases'])})" if p.get("aliases") else ""
+        process_names = ", ".join((p.get("processes") or {}).keys())
+        processes = f" — known processes: {process_names}" if process_names else ""
+        program_lines.append(f"- {p['name']}{aliases}{processes}")
+    programs_section = "\n".join(program_lines) if program_lines else "none configured"
+
     return f"""You are Compressor, a friendly AI voice assistant for the home. Your responses will be spoken aloud, so:
 - Be concise (1-3 sentences unless the user asks for detail)
 - Avoid markdown, bullet points, or formatting
@@ -35,8 +44,10 @@ def build_system_prompt(location: dict, devices: list[dict]) -> str:
 
 Current location: {city}, {region} (timezone: {tz})
 Registered smart home devices: {device_names}
+Programs that can be opened by voice (open_program tool):
+{programs_section}
 
-You can control smart home devices and music, but you are also a general-purpose AI assistant. Answer any question the user asks — cooking, trivia, advice, facts, recommendations — just like a knowledgeable friend would. Only use tools when the user wants to control a device or play music.
+You can control smart home devices, music, and open programs on the computer, but you are also a general-purpose AI assistant. Answer any question the user asks — cooking, trivia, advice, facts, recommendations — just like a knowledgeable friend would. Only use tools when the user wants to control a device, play music, or open a program.
 """
 
 
@@ -97,7 +108,9 @@ class Assistant:
                 else None
             )
 
-            self._system_prompt = build_system_prompt(location, devices)
+            self._system_prompt = build_system_prompt(
+                location, devices, self._config.get("programs", []) or []
+            )
 
             self._scheduler = Scheduler()
             self._scheduler.register(

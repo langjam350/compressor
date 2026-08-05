@@ -423,3 +423,20 @@ def test_follower_constructs_program_launcher(mocker):
     mock_launcher_cls.assert_called_once()
     assert assistant._launcher is mock_launcher_cls.return_value
     assert mock_launcher_cls.call_args.kwargs.get("unit_name") == "Kitchen"
+
+
+def test_build_system_prompt_includes_program_tree():
+    from src.assistant import build_system_prompt
+    prompt = build_system_prompt(
+        {"city": "Chicago", "region": "Illinois", "timezone": "America/Chicago"},
+        [],
+        [
+            {"name": "brave", "launch": "brave", "process_name": "brave",
+             "aliases": ["browser"], "processes": {"youtube": "https://youtube.com"}},
+            {"name": "notepad", "launch": "notepad", "process_name": "notepad"},
+        ],
+    )
+    assert "brave" in prompt
+    assert "browser" in prompt      # alias listed
+    assert "youtube" in prompt      # known process listed
+    assert "notepad" in prompt

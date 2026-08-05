@@ -49,3 +49,26 @@ spotify:
   client_id: YOUR_SPOTIFY_CLIENT_ID
   client_secret: YOUR_SPOTIFY_CLIENT_SECRET
   redirect_uri: http://localhost:8888/callback
+
+# Programs openable by voice on THIS machine ("compressor, open brave and
+# go to youtube"). Each unit (host or follower) has its own list — a
+# command spoken to a follower opens the program on that follower.
+# processes: named actions inside the program (the launch argument).
+# Unknown processes are learned automatically into programs_learned.yaml
+# on first successful use.
+programs:
+  - name: brave
+    launch: brave
+    process_name: brave
+    aliases: [browser]
+    processes:
+      youtube: https://youtube.com
+  - name: notepad
+    launch: notepad
+    process_name: notepad
+  - name: calculator
+    launch: calc
+    process_name: CalculatorApp
+  - name: explorer
+    launch: explorer
+    process_name: explorer
