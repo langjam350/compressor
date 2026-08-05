@@ -95,3 +95,21 @@ def test_launch_failure_returns_string_not_raise(mocker, tmp_path):
     result = _launcher(tmp_path).open("notepad")
 
     assert "Couldn't open" in result
+
+
+def test_empty_program_string_matches_nothing(mocker, tmp_path):
+    mock_start = mocker.patch("src.integrations.launcher.os.startfile")
+
+    result = _launcher(tmp_path).open("")
+
+    mock_start.assert_not_called()
+    assert "isn't configured" in result
+
+
+def test_whitespace_program_string_matches_nothing(mocker, tmp_path):
+    mock_start = mocker.patch("src.integrations.launcher.os.startfile")
+
+    result = _launcher(tmp_path).open("   ")
+
+    mock_start.assert_not_called()
+    assert "isn't configured" in result

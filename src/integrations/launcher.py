@@ -32,6 +32,8 @@ class ProgramLauncher:
 
     def _match(self, spoken: str) -> dict | None:
         key = spoken.strip().lower()
+        if not key:
+            return None
         if key in self._programs:
             return self._programs[key]
         for entry in self._programs.values():
