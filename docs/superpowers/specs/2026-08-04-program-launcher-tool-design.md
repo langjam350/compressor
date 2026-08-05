@@ -18,9 +18,18 @@ are executed from Claude's best-guess argument and **learned on first
 use** — written back to a per-machine learned file so the tree grows
 with usage (the "self-referential loop").
 
-## 1. Tool definition (host side)
+## 1. Tool registry module (new) and tool definition
 
-New entry in `TOOLS` (`src/ai_client.py`):
+**Tool schemas move out of `src/ai_client.py` into a new `src/tools.py`.**
+The existing `TOOLS` list (`control_tuya_device`, `control_spotify`)
+relocates there, and `AIClient` stops importing any tool definitions:
+its constructor gains a `tools: list[dict]` parameter
+(`AIClient(api_key, system_prompt, tools)`), making it a generic Claude
+wrapper with no knowledge of which tools exist. `Assistant` passes
+`src/tools.py`'s `TOOLS` when constructing per-unit clients. Existing
+`test_ai_client.py` tests update to pass tools explicitly.
+
+New entry in `TOOLS` (now `src/tools.py`):
 
 - Name: `open_program`
 - Input schema:
@@ -149,8 +158,12 @@ path, attributed to the requesting unit, like every other tool.
   follower-requester broadcasts targeted payload and returns optimistic
   text; `_handle_network_command` dispatches `open_program` only when
   `target_unit` matches.
-- `tests/test_ai_client.py`: `open_program` present in `TOOLS` with the
-  three-field schema.
+- `tests/test_tools.py` (new): `open_program` present in `src/tools.py`'s
+  `TOOLS` with the three-field schema; existing tool schemas intact
+  after the move.
+- `tests/test_ai_client.py`: updated for the `tools` constructor
+  parameter; `AIClient` passes whatever tools it is given to the API
+  call (no hardcoded imports).
 - System-prompt test: program tree section appears in
   `build_system_prompt` output.
 
