@@ -12,6 +12,7 @@ from src.actions import ACTIONS
 from src.actions.context import ActionContext
 from src.integrations.tuya import TuyaController
 from src.integrations.spotify import SpotifyController
+from src.integrations.launcher import ProgramLauncher
 from src.network.host_server import app, run_server
 from src.network.client import NetworkClient
 from src.scheduler import Scheduler
@@ -55,6 +56,10 @@ class Assistant:
         host_port = self._config.get("host_port", 8765)
         ws_ip = "127.0.0.1" if self._role == "host" else self._config.get("host_ip", "127.0.0.1")
         self._network = NetworkClient(ws_ip, host_port)
+        self._launcher = ProgramLauncher(
+            self._config.get("programs", []) or [],
+            unit_name=self._unit_name,
+        )
 
         self._tuya = None
         self._spotify = None
@@ -125,13 +130,23 @@ class Assistant:
         log.info("[Assistant] TuyaController reloaded with %d device(s).", len(updated_devices))
 
     def _handle_network_command(self, payload: dict):
-        """Handle commands broadcast from other devices (e.g. house-speaker sync)."""
-        if payload.get("type") == "spotify" and self._spotify:
+        """Handle commands broadcast from other units over the host's WS relay."""
+        ptype = payload.get("type")
+        if ptype == "spotify" and self._spotify:
             self._spotify.control(
                 payload["action"],
                 payload.get("query"),
                 house_speakers=False,
             )
+        elif ptype == "open_program":
+            if payload.get("target_unit") != self._unit_name:
+                return  # addressed to a different unit
+            result = self._launcher.open(
+                payload.get("program", ""),
+                process=payload.get("process"),
+                argument=payload.get("argument"),
+            )
+            print(f"[Compressor] Remote open_program: {result}")
 
     def _get_unit_lock(self, unit_name: str) -> threading.Lock:
         """Return (creating if needed) the lock that serializes requests for one unit.
@@ -198,7 +213,7 @@ class Assistant:
             unit_name=unit_name,
             tuya=self._tuya,
             spotify=self._spotify,
-            launcher=getattr(self, "_launcher", None),
+            launcher=self._launcher,
             network=self._network,
             config=self._config,
             host_unit_name=self._unit_name,

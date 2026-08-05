@@ -66,3 +66,39 @@ def test_spotify_action_without_controller_reports_unconfigured(mocker):
     ctx = _ctx(mocker, spotify=None)
     from src.actions import control_spotify
     assert control_spotify.run(ctx, {"action": "pause"}) == "Integration not configured."
+
+
+def test_open_program_local_when_requester_is_host(mocker):
+    ctx = _ctx(mocker, unit_name="host", host_unit_name="host")
+    ctx.launcher.open.return_value = "Opening youtube in brave."
+
+    from src.actions import open_program
+    result = open_program.run(ctx, {"program": "brave", "process": "youtube", "argument": "https://youtube.com"})
+
+    ctx.launcher.open.assert_called_once_with("brave", process="youtube", argument="https://youtube.com")
+    ctx.network.broadcast.assert_not_called()
+    assert result == "Opening youtube in brave."
+
+
+def test_open_program_broadcasts_to_requesting_follower(mocker):
+    ctx = _ctx(mocker, unit_name="Kitchen", host_unit_name="host")
+
+    from src.actions import open_program
+    result = open_program.run(ctx, {"program": "brave", "process": "youtube", "argument": "https://youtube.com"})
+
+    ctx.launcher.open.assert_not_called()
+    ctx.network.broadcast.assert_called_once_with({
+        "type": "open_program",
+        "target_unit": "Kitchen",
+        "program": "brave",
+        "process": "youtube",
+        "argument": "https://youtube.com",
+    })
+    assert "Kitchen" in result
+
+
+def test_open_program_without_launcher_reports_unconfigured(mocker):
+    ctx = _ctx(mocker, launcher=None)
+    from src.actions import open_program
+    result = open_program.run(ctx, {"program": "brave"})
+    assert "isn't configured" in result
