@@ -68,7 +68,5 @@ programs:
     process_name: notepad
   - name: calculator
     launch: calc
-    process_name: CalculatorApp
   - name: explorer
     launch: explorer
-    process_name: explorer

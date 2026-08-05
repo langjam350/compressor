@@ -185,3 +185,45 @@ def test_learning_writes_action_log_event(mocker, tmp_path):
     _launcher(tmp_path).open("brave", process="reddit", argument="https://reddit.com")
 
     mock_log.assert_called_once_with("TestUnit", "brave", "reddit", "https://reddit.com")
+
+
+def test_is_running_with_empty_process_name_returns_false(mocker, tmp_path):
+    """A missing process_name (e.g. calculator/explorer, which can never be
+    reliably detected as 'already running') must never block a launch."""
+    mock_iter = mocker.patch("src.integrations.launcher.psutil.process_iter")
+
+    result = _launcher(tmp_path)._is_running("")
+
+    assert result is False
+    mock_iter.assert_not_called()
+
+
+def test_program_without_process_name_launches_without_already_running_check(mocker, tmp_path):
+    """A registry entry with no process_name key must always launch bare —
+    it can never be short-circuited by the already-running check."""
+    mock_start = mocker.patch("src.integrations.launcher.os.startfile")
+    # Even if psutil reports a process that would otherwise match, the
+    # missing process_name must prevent the already-running check from
+    # ever running in the first place.
+    mock_iter = mocker.patch("src.integrations.launcher.psutil.process_iter")
+    mock_iter.return_value = [mocker.MagicMock(info={"name": "explorer.exe"})]
+
+    programs = [{"name": "explorer", "launch": "explorer"}]
+    result = _launcher(tmp_path, programs=programs).open("explorer")
+
+    mock_start.assert_called_once_with("explorer")
+    assert "Opening explorer" in result
+
+
+def test_program_entry_without_name_skipped_at_construction(mocker, tmp_path):
+    from src.integrations.launcher import ProgramLauncher
+
+    launcher = ProgramLauncher(
+        [{"launch": "brave"}],
+        learned_path=str(tmp_path / "programs_learned.yaml"),
+        unit_name="TestUnit",
+    )
+
+    result = launcher.open("brave")
+
+    assert "isn't configured" in result

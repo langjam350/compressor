@@ -440,3 +440,27 @@ def test_build_system_prompt_includes_program_tree():
     assert "browser" in prompt      # alias listed
     assert "youtube" in prompt      # known process listed
     assert "notepad" in prompt
+
+
+def test_build_system_prompt_skips_nameless_program_entry():
+    from src.assistant import build_system_prompt
+    # Must not raise on a malformed entry missing "name".
+    build_system_prompt({}, [], [{"launch": "x"}])
+
+
+def test_tool_handler_routes_requester_and_host_names_into_action_context(mocker):
+    """Regression test for the ActionContext wiring in _tool_handler: a
+    request from a unit other than the host must take the optimistic
+    broadcast path (network.broadcast), not the local-launch path
+    (launcher.open). This fails if unit_name/host_unit_name are swapped
+    when constructing ActionContext."""
+    assistant, mock_ai, _ = _make_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    assistant._launcher = mocker.MagicMock()
+
+    result = assistant._tool_handler("Kitchen", "open_program", {"program": "brave"})
+
+    assistant._network.broadcast.assert_called_once()
+    payload = assistant._network.broadcast.call_args[0][0]
+    assert payload["target_unit"] == "Kitchen"
+    assistant._launcher.open.assert_not_called()
+    assert "Kitchen" in result

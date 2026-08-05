@@ -31,6 +31,8 @@ def build_system_prompt(location: dict, devices: list[dict], programs: list[dict
 
     program_lines = []
     for p in programs or []:
+        if not p.get("name"):
+            continue
         aliases = f" (aliases: {', '.join(p['aliases'])})" if p.get("aliases") else ""
         process_names = ", ".join((p.get("processes") or {}).keys())
         processes = f" — known processes: {process_names}" if process_names else ""

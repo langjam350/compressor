@@ -4,7 +4,7 @@ from pathlib import Path
 import psutil
 import yaml
 
-from src import action_log  # enabled in learning task
+from src import action_log
 
 
 class ProgramLauncher:
@@ -21,7 +21,13 @@ class ProgramLauncher:
         unit_name: str = "host",
     ):
         # name (lowercased) -> program entry
-        self._programs = {p["name"].lower(): p for p in programs}
+        self._programs = {}
+        for entry in programs:
+            name = entry.get("name")
+            if not name:
+                print(f"[Launcher] Skipping program entry with no name: {entry!r}")
+                continue
+            self._programs[name.lower()] = entry
         self._learned_path = Path(learned_path)
         self._unit_name = unit_name
         self._learned = self._load_learned()
@@ -56,6 +62,8 @@ class ProgramLauncher:
         return learned.get(p)
 
     def _is_running(self, process_name: str) -> bool:
+        if not process_name:
+            return False
         target = process_name.lower()
         for proc in psutil.process_iter(["name"]):
             name = (proc.info.get("name") or "").lower()
@@ -86,7 +94,8 @@ class ProgramLauncher:
             )
         except Exception as e:
             print(f"[Launcher] Could not write {self._learned_path} ({e}).")
-        action_log.log_process_learned(self._unit_name, program_name, process, argument)  # enabled in learning task
+        print(f"[Launcher] Learned {program_name} -> {process}: {argument}")
+        action_log.log_process_learned(self._unit_name, program_name, process, argument)
 
     # ------------------------------------------------------------------ #
     # Public API                                                          #
