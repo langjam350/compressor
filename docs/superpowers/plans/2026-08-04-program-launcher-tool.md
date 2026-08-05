@@ -1167,6 +1167,70 @@ git commit -m "List program tree in system prompt; add starter program registry"
 
 ---
 
+### Task 7: README rewrite for the public repository
+
+**Files:**
+- Modify: `README.md`
+
+**Interfaces:**
+- Consumes: shipped feature set as of Task 6 (host/follower roles, wake word, Tuya, Spotify, open_program with learning).
+- Produces: a public-facing README; no code interfaces.
+
+- [ ] **Step 1: Rewrite the README's opening so a stranger understands what this is and who it's for**
+
+Replace the current top-of-file intro with (adjust wording to match the file's existing tone, keep it concise):
+
+```markdown
+# Compressor
+
+A self-hosted, multi-room voice assistant for Windows — an Alexa-style
+system you run on your own computers. One machine acts as the **host**
+(the only unit holding API keys and talking to the outside world); any
+number of **follower** machines in other rooms relay voice commands to
+it over your LAN and speak the responses locally.
+
+**Who it's for:** tinkerers who want a private, hackable home voice
+assistant built from machines they already own — with smart-home
+control (Tuya devices), Spotify, program launching by voice, and a
+general-purpose AI brain (Claude) — without shipping their household
+audio to a big-box smart speaker.
+
+**What it does today:**
+- Wake word ("compressor") with on-device openWakeWord detection
+  (cloud-STT fallback until you train the model — see
+  docs/WAKE-WORD-TRAINING.md)
+- Natural-language smart-home control of Tuya lights/plugs on your LAN
+- Spotify playback, including house-wide playback across units
+- Opens programs by voice on whichever machine you spoke to
+  ("compressor, open Brave and go to YouTube") — and learns new
+  program actions the first time you use them
+- Per-unit conversation isolation and a host-side action log of
+  everything the system did
+```
+
+- [ ] **Step 2: Reconcile the rest of the README**
+
+Read the full README and update any section that contradicts the current
+code (roles, config fields including `programs:`, `unit_name`,
+host-only `anthropic_api_key`, `wake_model_path`/`wake_threshold`).
+Add a short "Programs by voice" config section mirroring
+`config.example.yaml`'s `programs:` block, including one sentence on
+use-driven learning and `programs_learned.yaml`.
+
+- [ ] **Step 3: Run the full suite (docs-only change — confirm nothing broke by accident)**
+
+Run: `py -m pytest tests/ -v`
+Expected: PASS, same count as after Task 6.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add README.md
+git commit -m "Rewrite README: what Compressor is, who it's for, current features"
+```
+
+---
+
 ## Post-implementation notes (not code tasks)
 
 - Live smoke test on the host: `py main.py`, then "compressor, open brave and go to youtube" → Brave opens YouTube; a second, novel site ("go to reddit") should work AND appear in `programs_learned.yaml` afterward.
