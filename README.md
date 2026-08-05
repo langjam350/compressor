@@ -1,13 +1,28 @@
 # Compressor
 
-A voice-activated home assistant that controls smart devices and Spotify across multiple machines on your LAN. Say the wake word, give a command — Compressor handles the rest.
+A self-hosted, multi-room voice assistant for Windows — an Alexa-style
+system you run on your own computers. One machine acts as the **host**
+(the only unit holding API keys and talking to the outside world); any
+number of **follower** machines in other rooms relay voice commands to
+it over your LAN and speak the responses locally.
 
-**Features**
-- Wake-word activation ("compressor" by default)
-- Natural language via Claude AI
-- Tuya smart device control (lights, plugs, fans, etc.)
-- Spotify playback control, including house-wide speaker sync
-- Multi-room support: one Host machine, unlimited Follower machines
+**Who it's for:** tinkerers who want a private, hackable home voice
+assistant built from machines they already own — with smart-home
+control (Tuya devices), Spotify, program launching by voice, and a
+general-purpose AI brain (Claude) — without shipping their household
+audio to a big-box smart speaker.
+
+**What it does today:**
+- Wake word ("compressor") with on-device openWakeWord detection
+  (cloud-STT fallback until you train the model — see
+  [docs/WAKE-WORD-TRAINING.md](docs/WAKE-WORD-TRAINING.md))
+- Natural-language smart-home control of Tuya lights/plugs on your LAN
+- Spotify playback, including house-wide playback across units
+- Opens programs by voice on whichever machine you spoke to
+  ("compressor, open Brave and go to YouTube") — and learns new
+  program actions the first time you use them
+- Per-unit conversation isolation and a host-side action log of
+  everything the system did
 
 ---
 
@@ -22,7 +37,9 @@ A voice-activated home assistant that controls smart devices and Spotify across 
     └──── [Follower machine]  ←── plays back Spotify on local device
 ```
 
-The **Host** runs the AI and integration logic and is the only machine that needs an Anthropic API key — **Followers** hold zero Anthropic credentials. A Follower captures a spoken command, sends it to the Host over `POST /query` (`{unit_name, text}` in, `{response}` out), and speaks back whatever the Host returns. Followers also stay connected to the Host over WebSocket so that "play everywhere" commands can be broadcast to every speaker in the house.
+The **Host** runs the AI and integration logic and is the only machine that needs an Anthropic API key — **Followers** hold zero Anthropic credentials. A Follower captures a spoken command, sends it to the Host over `POST /query` (`{unit_name, text}` in, `{response}` out), and speaks back whatever the Host returns. Followers also stay connected to the Host over WebSocket so that "play everywhere" commands and targeted actions (like opening a program on a specific follower) can be broadcast to the right unit.
+
+Wake-word detection runs locally on every unit via [openWakeWord](https://github.com/dscripka/openWakeWord) once you've trained a model for "compressor" (see [docs/WAKE-WORD-TRAINING.md](docs/WAKE-WORD-TRAINING.md)); until then, each unit falls back to cloud speech-to-text for wake detection.
 
 Note: the Host keeps each unit's conversation history in memory only. Restarting the Host clears all in-progress conversation context for every unit — a follow-up like "what about the bedroom?" won't be understood as a continuation after a Host restart.
 
@@ -63,6 +80,11 @@ cp config.example.yaml config.yaml
 role: host
 wake_word: compressor
 
+# Trained openWakeWord model (see docs/WAKE-WORD-TRAINING.md). Falls back
+# to cloud STT for wake detection until the model file exists here.
+wake_model_path: models/compressor.onnx
+wake_threshold: 0.5
+
 anthropic_api_key: sk-ant-...
 
 tuya:
@@ -77,6 +99,15 @@ spotify:
   client_id: YOUR_SPOTIFY_CLIENT_ID
   client_secret: YOUR_SPOTIFY_CLIENT_SECRET
   redirect_uri: http://localhost:8888/callback
+
+# Programs this machine can open by voice — see "Programs by voice" below.
+programs:
+  - name: brave
+    launch: brave
+    process_name: brave
+    aliases: [browser]
+    processes:
+      youtube: https://youtube.com
 ```
 
 `anthropic_api_key` is required on the Host and is host-only — Followers never need one.
@@ -86,14 +117,23 @@ spotify:
 ```yaml
 role: follower
 wake_word: compressor
+wake_model_path: models/compressor.onnx
+wake_threshold: 0.5
 host_ip: 192.168.1.100    # LAN IP of the Host machine
 host_port: 8765
 
 unit_name: Kitchen         # required — identifies this unit to the Host and
                             # attributes host-side action-log entries to it
+
+# Optional — programs this specific follower can open by voice. Each unit
+# has its own list; a command spoken to a follower opens the program there.
+programs:
+  - name: notepad
+    launch: notepad
+    process_name: notepad
 ```
 
-Followers do **not** need Tuya, Spotify, or an `anthropic_api_key` in their config — those run on the Host only. `unit_name` is required for every Follower and should be unique per unit.
+Followers do **not** need Tuya, Spotify, or an `anthropic_api_key` in their config — those run on the Host only. `unit_name` is required for every Follower and should be unique per unit. `wake_model_path`/`wake_threshold` are optional on every unit (host and followers alike); omit them to use the cloud-STT wake fallback.
 
 ---
 
@@ -140,6 +180,35 @@ py -m tinytuya wizard
 
 ---
 
+## Programs by voice
+
+Any unit (host or follower) can open programs on itself by voice — e.g.
+"compressor, open Brave and go to YouTube". Add a `programs:` block to
+that unit's `config.yaml`:
+
+```yaml
+programs:
+  - name: brave
+    launch: brave              # what gets passed to os.startfile()
+    process_name: brave        # process name used to detect "already running"
+    aliases: [browser]         # optional alternate names Compressor will match
+    processes:                 # optional named sub-actions ("go to youtube")
+      youtube: https://youtube.com
+  - name: notepad
+    launch: notepad
+    process_name: notepad
+```
+
+A command spoken to a follower opens the program on that follower, not the
+host — each unit only needs the `programs:` entries for what it can launch
+locally. The first time you ask for a process that isn't listed under
+`processes` (e.g. "open Brave and go to Reddit"), Compressor opens it and
+remembers the mapping in that unit's `programs_learned.yaml`, so it doesn't
+need to ask again next time. `programs_learned.yaml` is created automatically
+and grows independently per unit.
+
+---
+
 ## Running
 
 ### Host
@@ -181,12 +250,18 @@ Say the wake word to activate, then speak your command:
 | Pause | "Pause the music" |
 | Skip | "Next song" |
 | Volume | "Turn it up" / "Turn it down" |
+| Open a program | "Open Brave" |
+| Open a program to a specific page/action | "Open Brave and go to YouTube" |
+
+Commands are always handled by the unit you spoke to — an "open a program" command opens it on that unit, not the host.
 
 ---
 
 ## Troubleshooting
 
 **"Device not found"** — Check that the device name in your command loosely matches the name in `config.yaml`. Matching is fuzzy (substring).
+
+**"Program isn't configured on \<unit\>"** — Add a `programs:` entry for it in that unit's `config.yaml` (see "Programs by voice" above). Each unit only knows the programs listed in its own config plus anything it has learned into `programs_learned.yaml`.
 
 **Tuya error 1106 "permission deny"** — Your IoT project doesn't have the device linked. Follow Step 2 in the Tuya setup section above to link your Smart Life account.
 
@@ -196,4 +271,4 @@ Say the wake word to activate, then speak your command:
 
 **Follower can't connect to host** — Confirm `host_ip` in the follower config matches the host's LAN IP (`ipconfig` on Windows). Check the firewall rule above.
 
-**Wake word not detected** — Check that your microphone is set as the default input device in your OS audio settings.
+**Wake word not detected** — Check that your microphone is set as the default input device in your OS audio settings. If you haven't trained a model yet (`wake_model_path` file doesn't exist), Compressor falls back to cloud STT for wake detection, which is slower and less reliable — see [docs/WAKE-WORD-TRAINING.md](docs/WAKE-WORD-TRAINING.md). If a model is trained but wakes are missed or too frequent, adjust `wake_threshold` (lower = more sensitive).
