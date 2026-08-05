@@ -51,6 +51,44 @@ New entry in `TOOLS` (now `src/tools.py`):
 (names, aliases, and known process names) — same pattern as the
 registered-devices list.
 
+## 1b. Action modules (`src/actions/`, new)
+
+Execution is factored into one Python file per action, decoupled from
+dispatch. **Nothing about how Claude decides what to call changes** —
+tool schemas (`src/tools.py`), the system prompt, and the tool-use loop
+in `AIClient` are untouched by this section; it only reorganizes what
+happens *after* Claude names a tool.
+
+- `src/actions/control_tuya_device.py` — the working smart-lights
+  action, first resident of the folder.
+- `src/actions/control_spotify.py` — moved as well so there is exactly
+  one dispatch pattern, not two.
+- `src/actions/open_program.py` — the new launcher action (§2-§4).
+
+Each action file exposes one function with a uniform signature:
+
+```python
+def run(ctx, tool_input: dict) -> str
+```
+
+where `ctx` is a small context object carrying what actions may need
+(`unit_name`, `tuya`, `spotify`, `launcher`, `network`, `config`).
+`src/actions/__init__.py` exports an explicit registry:
+
+```python
+ACTIONS = {
+    "control_tuya_device": control_tuya_device.run,
+    "control_spotify": control_spotify.run,
+    "open_program": open_program.run,
+}
+```
+
+`Assistant._tool_handler` shrinks to: log the call, look up
+`ACTIONS[tool_name]`, invoke it, log the result — per-tool logic
+(including the Spotify house-speaker broadcast) moves into the action
+files. Unknown tool names keep the existing "Integration not
+configured." response.
+
 ## 2. Routing (host decides, requester executes)
 
 All tool calls run on the host (`Assistant._tool_handler`, which already
@@ -161,6 +199,12 @@ path, attributed to the requesting unit, like every other tool.
 - `tests/test_tools.py` (new): `open_program` present in `src/tools.py`'s
   `TOOLS` with the three-field schema; existing tool schemas intact
   after the move.
+- `tests/test_actions.py` (new): `ACTIONS` registry maps every schema in
+  `TOOLS` to a callable (names stay in sync); each action's `run(ctx,
+  tool_input)` drives its controller correctly (mocked ctx); Spotify
+  house-speaker broadcast still fires from the action module; existing
+  `_tool_handler` tests updated for registry dispatch with behavior
+  unchanged from Claude's perspective.
 - `tests/test_ai_client.py`: updated for the `tools` constructor
   parameter; `AIClient` passes whatever tools it is given to the API
   call (no hardcoded imports).
