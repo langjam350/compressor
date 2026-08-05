@@ -44,5 +44,34 @@ TOOLS = [
             },
             "required": ["action"]
         }
-    }
+    },
+    {
+        "name": "open_program",
+        "description": (
+            "Open a program/application on the computer in the room where the user spoke. "
+            "Programs available on the host are listed in the system prompt (other units have "
+            "their own lists — attempt the call even for a program not listed). When the user "
+            "wants something done inside the program (a website, a file), also give a short "
+            "lowercase 'process' name AND your best-guess 'argument' — e.g. going to YouTube "
+            "in a browser is process 'youtube' with argument 'https://youtube.com'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "program": {
+                    "type": "string",
+                    "description": "Program to open, e.g. 'brave', 'notepad'. 'browser' maps to the user's preferred browser."
+                },
+                "process": {
+                    "type": "string",
+                    "description": "Short lowercase name for the action inside the program, e.g. 'youtube'"
+                },
+                "argument": {
+                    "type": "string",
+                    "description": "Concrete URL, file path, or command-line argument for the process, e.g. 'https://youtube.com'"
+                }
+            },
+            "required": ["program"]
+        }
+    },
 ]

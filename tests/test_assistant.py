@@ -382,3 +382,33 @@ def test_tool_exception_aborts_query_with_generic_apology(mocker):
 
     assert result == "Sorry, something went wrong."
     mock_log_error.assert_called_once_with("host", "ai_ask", "boom")
+
+
+def test_network_open_program_for_this_unit_launches(mocker):
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    assistant._launcher = mocker.MagicMock()
+
+    assistant._handle_network_command({
+        "type": "open_program", "target_unit": "Kitchen",
+        "program": "brave", "process": "youtube", "argument": "https://youtube.com",
+    })
+
+    assistant._launcher.open.assert_called_once_with(
+        "brave", process="youtube", argument="https://youtube.com"
+    )
+
+
+def test_network_open_program_for_other_unit_ignored(mocker):
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    assistant._launcher = mocker.MagicMock()
+
+    assistant._handle_network_command({
+        "type": "open_program", "target_unit": "Bedroom",
+        "program": "brave", "process": None, "argument": None,
+    })
+
+    assistant._launcher.open.assert_not_called()
