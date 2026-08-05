@@ -34,9 +34,13 @@ def create_session(agent_config: dict) -> CodingAgentSession:
     agent = (agent_config.get("agent") or "claude_code").lower()
     if agent == "claude_code":
         from src.integrations.coding_agents.claude_code import ClaudeCodeSession
+        permission_mode = agent_config.get("permission_mode", "acceptEdits")
+        if str(permission_mode).lower() == "bypasspermissions":
+            print("[CodingAgents] permission_mode bypassPermissions is not allowed; using acceptEdits.")
+            permission_mode = "acceptEdits"
         return ClaudeCodeSession(
             model=agent_config.get("model"),
-            permission_mode=agent_config.get("permission_mode", "acceptEdits"),
+            permission_mode=permission_mode,
             max_turns=int(agent_config.get("max_turns", 25)),
             task_timeout_seconds=int(agent_config.get("task_timeout_seconds", 600)),
         )

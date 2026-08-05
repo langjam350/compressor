@@ -229,8 +229,12 @@ Configure it with the `coding_agent:` section (see `config.example.yaml`).
 The layer is agent-agnostic — which agent and model run come from config;
 currently `claude_code` is the only supported agent (requires the
 [Claude Code](https://claude.com/claude-code) CLI installed and signed in).
-Sessions are scoped to the configured project directory with
-auto-approved edits (`acceptEdits`) and never bypass permissions.
+Sessions run in the configured project directory with auto-approved
+edits (`acceptEdits`) — `permission_mode: bypassPermissions` in config is
+rejected and downgraded to `acceptEdits`. That said, a session still
+inherits the target project's own Claude Code permission settings (e.g.
+`.claude/settings.local.json` command allowlists), so review a project's
+allowlists before pointing a hot microphone at it.
 
 ---
 

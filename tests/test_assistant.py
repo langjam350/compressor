@@ -643,6 +643,70 @@ def test_follower_role_gets_claude_mode_without_host_logging(mocker):
     mock_log_claude_mode.assert_not_called()
 
 
+def test_claude_mode_factory_error_does_not_crash_process(mocker):
+    """A malformed coding_agent config (e.g. int(None) TypeError from a
+    blank max_turns in YAML) must degrade to speech, not propagate out of
+    run() and kill the whole assistant process."""
+    assistant, mock_session, mock_factory, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=[],
+    )
+    mock_factory.side_effect = TypeError("boom")
+
+    assistant.run()  # must not raise
+
+    mock_tts.speak.assert_any_call("Claude mode hit an error.")
+    mock_tts.speak.assert_any_call("Compressor ready.")
+    mock_session.stop.assert_not_called()  # session was never created
+
+
+def test_remote_query_cannot_enter_claude_mode(mocker):
+    """'start claude' arriving via _process_query (i.e. from a remote
+    follower's /query call) must never reach the Claude-mode entry check —
+    that parsing only happens in run()'s local wake-word loop. It should
+    flow straight to the normal AI conversation path instead."""
+    assistant, _, mock_factory, _ = _make_claude_mode_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    mock_ai = mocker.MagicMock()
+    mock_ai.ask.return_value = "handled normally"
+    mocker.patch.object(assistant, "_get_ai_client", return_value=mock_ai)
+
+    result = assistant._process_query("Kitchen", "start claude")
+
+    mock_factory.assert_not_called()
+    mock_ai.ask.assert_called_once()
+    assert result == "handled normally"
+
+
+def test_claude_mode_idle_timeout_exits_and_speaks(mocker):
+    """Continuous silence past CLAUDE_MODE_IDLE_EXIT_SECONDS auto-exits the
+    mode, stops the session, and speaks a timeout message. time.time() is
+    patched with an exact 3-call sequence (initial deadline + two idle
+    checks) paired with two falsy listen_once returns, deliberately scoped
+    to this test's call count so it doesn't entangle with time.time() usage
+    elsewhere in the assistant (e.g. _get_ai_client, which isn't exercised
+    on this code path)."""
+    from src.assistant import CLAUDE_MODE_IDLE_EXIT_SECONDS
+
+    assistant, mock_session, _, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=[None, None],
+    )
+    base = 1_000_000.0
+    mocker.patch(
+        "src.assistant.time.time",
+        side_effect=[base, base, base + CLAUDE_MODE_IDLE_EXIT_SECONDS + 1],
+    )
+
+    assistant.run()
+
+    mock_session.stop.assert_called_once()
+    mock_tts.speak.assert_any_call("Claude mode timed out.")
+
+
 def test_mode_exchange_and_lifecycle_are_action_logged(mocker):
     assistant, mock_session, _, _ = _make_claude_mode_assistant(
         mocker,

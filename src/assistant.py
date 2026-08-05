@@ -223,9 +223,13 @@ class Assistant:
 
     def _run_claude_mode(self, target_name: str) -> None:
         """Route speech into a coding-agent session until the wake word
-        is spoken ALONE (the universal escape), or idle timeout."""
+        is spoken ALONE (the universal escape), or idle timeout.
+
+        Must never let an exception escape — a malformed coding_agent config
+        (e.g. a factory TypeError from a bad max_turns value) degrades to a
+        spoken error instead of killing the whole process."""
         cfg = self._config.get("coding_agent")
-        if not cfg or not cfg.get("default_workdir"):
+        if not isinstance(cfg, dict) or not cfg.get("default_workdir"):
             self._speak_safe("Claude mode isn't configured on this unit.")
             return
 
@@ -237,36 +241,45 @@ class Assistant:
                 self._speak_safe(f"I don't have a project called {target_name}.")
                 return
 
-        session = create_session(cfg)
+        session = None
         try:
-            session.start(workdir)
-            self._speak_safe("Starting Claude.")
-            if self._role == "host":
-                action_log.log_claude_mode(self._unit_name, "enter", workdir)
-            print(f"[Compressor] Claude mode: {workdir} — say '{self._listener.wake_word}' alone to exit.")
-
-            idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
-            while True:
-                utterance = self._listener.listen_once(timeout=CLAUDE_MODE_LISTEN_TIMEOUT, phrase_time_limit=30)
-                if not utterance:
-                    if time.time() >= idle_deadline:
-                        self._speak_safe("Claude mode timed out.")
-                        break
-                    time.sleep(1)
-                    continue
-                # Escape rule: wake word ALONE exits; embedded passes through.
-                if utterance.strip().strip(".,!?").lower() == self._listener.wake_word:
-                    break
-                print(f"[Claude] > {utterance}")
-                self._speak_safe("Working on it.")
-                response = session.send(utterance)
+            try:
+                session = create_session(cfg)
+                session.start(workdir)
+                self._speak_safe("Starting Claude.")
                 if self._role == "host":
-                    action_log.log_claude_mode(self._unit_name, "exchange", f"{utterance} -> {response[:200]}")
-                print(f"[Claude] {response}")
-                self._speak_safe(response)
+                    action_log.log_claude_mode(self._unit_name, "enter", workdir)
+                print(f"[Compressor] Claude mode: {workdir} — say '{self._listener.wake_word}' alone to exit.")
+
                 idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
+                while True:
+                    utterance = self._listener.listen_once(timeout=CLAUDE_MODE_LISTEN_TIMEOUT, phrase_time_limit=30)
+                    if not utterance:
+                        if time.time() >= idle_deadline:
+                            self._speak_safe("Claude mode timed out.")
+                            break
+                        time.sleep(1)
+                        continue
+                    # Escape rule: wake word ALONE exits; embedded passes through.
+                    if utterance.strip().strip(".,!?").lower() == self._listener.wake_word:
+                        break
+                    print(f"[Claude] > {utterance}")
+                    self._speak_safe("Working on it.")
+                    response = session.send(utterance)
+                    if self._role == "host":
+                        action_log.log_claude_mode(self._unit_name, "exchange", f"{utterance} -> {response[:200]}")
+                    print(f"[Claude] {response}")
+                    self._speak_safe(response)
+                    idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
+            except Exception as e:
+                print(f"[Claude] mode error: {e}")
+                self._speak_safe("Claude mode hit an error.")
         finally:
-            session.stop()
+            if session is not None:
+                try:
+                    session.stop()
+                except Exception as e:
+                    print(f"[Claude] session stop failed: {e}")
             if self._role == "host":
                 action_log.log_claude_mode(self._unit_name, "exit", workdir)
             self._speak_safe("Compressor ready.")

@@ -65,7 +65,7 @@ class ClaudeCodeSession:
                 detail = snippet[-1][:120] if snippet else f"exit code {proc.returncode}"
                 return f"Claude Code failed ({detail})."
             data = json.loads(proc.stdout)
-            self._session_id = data.get("session_id", self._session_id)
+            self._session_id = data.get("session_id") or self._session_id
             result = data.get("result")
             return str(result) if result else "Claude finished but returned no text."
         except subprocess.TimeoutExpired:

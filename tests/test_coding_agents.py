@@ -32,6 +32,27 @@ def test_factory_defaults_agent_to_claude_code():
     assert isinstance(create_session({}), ClaudeCodeSession)
 
 
+def test_factory_downgrades_bypass_permissions(mocker, capsys):
+    """permission_mode: bypassPermissions must never reach the CLI — it's
+    silently downgraded to acceptEdits so config alone can't defeat the
+    documented permission rail."""
+    from src.integrations.coding_agents import create_session
+
+    mocker.patch("src.integrations.coding_agents.claude_code.shutil.which",
+                 return_value="C:\\npm\\claude.cmd")
+    mock_run = mocker.patch("src.integrations.coding_agents.claude_code.subprocess.run",
+                            return_value=_mock_run_result(mocker))
+
+    session = create_session({"agent": "claude_code", "permission_mode": "bypassPermissions"})
+    session.start("C:\\proj")
+    session.send("do something")
+
+    cmd = mock_run.call_args.args[0]
+    idx = cmd.index("--permission-mode")
+    assert cmd[idx + 1] == "acceptEdits"
+    assert "not allowed" in capsys.readouterr().out
+
+
 def test_factory_unknown_agent_returns_stub_with_spoken_message():
     from src.integrations.coding_agents import create_session
     session = create_session({"agent": "gemini_cli"})
