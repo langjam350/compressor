@@ -69,18 +69,42 @@ the session runs on that machine. It never routes through the host's
 locally. If the `claude` CLI is missing on the machine, entry fails
 with a spoken "Claude Code isn't installed on this unit."
 
-## 3. Session wrapper (`src/integrations/claude_code.py`, new)
+## 3. Session layer — agent-agnostic interface, Claude Code as first backend
 
-`ClaudeCodeSession` — wraps headless one-shot invocations, NOT a live
-terminal bridge (the interactive TUI's spinners/ANSI/permission dialogs
-are hostile to scraping; `-p` returns clean final text with identical
-capability):
+The session abstraction is **AI-agent agnostic by design**: the mode
+talks only to a generic interface, and which coding agent (and which
+model) gets used comes from configuration, not code. The intent is
+that integrations for the major coding agents (Claude Code, and later
+others — e.g. Codex CLI, Gemini CLI, Aider) can slot in behind the
+same interface. **v1 implements exactly one backend, Claude Code —
+no others are built now**; the seam just has to exist so adding one
+later means writing a new backend file plus a config value, touching
+nothing in the mode logic.
+
+`src/integrations/coding_agents/__init__.py` — the interface and a
+registry:
+
+- `CodingAgentSession` (protocol/base): `start(workdir: str) -> None`,
+  `send(text: str) -> str`, `stop() -> None`. `send()` never raises —
+  errors come back as spoken-safe strings.
+- `create_session(agent_config: dict) -> CodingAgentSession` — factory
+  keyed on `agent_config["agent"]` (v1: only `"claude_code"`; unknown
+  values → a stub session whose `send` returns "Coding agent '<name>'
+  isn't supported on this unit."). The factory passes through
+  config-supplied parameters (model, permission mode, turn/timeout
+  limits) so backends are parameterized entirely from `config.yaml`.
+
+`src/integrations/coding_agents/claude_code.py` — the one v1 backend:
+wraps headless one-shot invocations, NOT a live terminal bridge (the
+interactive TUI's spinners/ANSI/permission dialogs are hostile to
+scraping; `-p` returns clean final text with identical capability):
 
 - `start(workdir: str) -> None` — records the workdir; no process yet.
 - `send(text: str) -> str` — runs:
 
   ```
   claude -p <text> --output-format json
+         [--model <configured model, omitted if unset>]
          [--resume <session_id> on second and later calls]
          --permission-mode <configured, default acceptEdits>
          --add-dir <workdir> (cwd also set to workdir)
@@ -116,7 +140,9 @@ capability):
 ## 5. Config (`config.yaml`, per machine)
 
 ```yaml
-claude_code:
+coding_agent:
+  agent: claude_code       # which backend the factory builds (v1: only claude_code)
+  model:                   # optional; passed to the backend (e.g. claude --model); agent default if unset
   default_workdir: C:\git\compressor
   workdirs:                # spoken names for "start claude in <name>"
     jldesigns: C:\git\jldesigns
@@ -128,7 +154,9 @@ claude_code:
 
 Section optional — absent config means "Start Claude" responds
 "Claude mode isn't configured on this unit." Committed example goes in
-`config.example.yaml` with placeholder paths.
+`config.example.yaml` with placeholder paths. The `agent`/`model` keys
+are the agent-agnostic seam (§3): the mode never hardcodes a vendor;
+swapping coding agents later is a config change plus one backend file.
 
 ## 6. Error handling
 
@@ -143,11 +171,14 @@ Section optional — absent config means "Start Claude" responds
 
 ## 7. Testing
 
-- `tests/test_claude_code.py` (new): `send()` builds the expected
+- `tests/test_coding_agents.py` (new): factory returns the Claude Code
+  backend for `agent: claude_code`, parameterized from config (model,
+  permission mode, limits); unknown agent name → stub session with the
+  spoken-safe unsupported message; `send()` builds the expected
   command (first call no `--resume`, later calls with captured session
-  id — mock `subprocess.run`); JSON parse of result/session_id;
-  timeout → kill + spoken-safe string; CLI error → spoken-safe string;
-  never-raises contract.
+  id; `--model` present only when configured — mock `subprocess.run`);
+  JSON parse of result/session_id; timeout → kill + spoken-safe
+  string; CLI error → spoken-safe string; never-raises contract.
 - `tests/test_assistant.py`: "start claude" phrase enters the mode
   (session started with default workdir); "start claude in jldesigns"
   maps the named workdir; wake word ALONE exits (session.stop called,
@@ -157,6 +188,9 @@ Section optional — absent config means "Start Claude" responds
 
 ## Non-goals (deferred)
 
+- **Additional coding-agent backends** (Codex CLI, Gemini CLI, Aider,
+  etc.) — the agent-agnostic interface and config seam ship in v1, but
+  only the Claude Code backend is implemented. Do not build others now.
 - Interrupting/cancelling an in-flight task by voice (v1 blocks while
   a task runs; the escape word works only between tasks).
 - Streaming progress narration (`--output-format stream-json` exists
