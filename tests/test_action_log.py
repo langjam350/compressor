@@ -73,3 +73,15 @@ def test_log_process_learned_writes_expected_fields(tmp_path):
     assert record["program"] == "brave"
     assert record["process"] == "reddit"
     assert record["argument"] == "https://reddit.com"
+
+
+def test_log_claude_mode_writes_expected_fields(tmp_path):
+    from src import action_log
+    log_path = tmp_path / "actions.txt"
+    action_log.configure(str(log_path))
+    action_log.log_claude_mode("host", "enter", "C:\\git\\jldesigns")
+
+    record = json.loads(log_path.read_text().strip().splitlines()[0])
+    assert record["event"] == "claude_mode"
+    assert record["mode_event"] == "enter"
+    assert record["detail"] == "C:\\git\\jldesigns"

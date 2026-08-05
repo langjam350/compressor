@@ -65,3 +65,7 @@ def log_error(unit: str, context: str, error: str) -> None:
 
 def log_process_learned(unit: str, program: str, process: str, argument: str) -> None:
     _write("process_learned", unit, program=program, process=process, argument=argument)
+
+
+def log_claude_mode(unit: str, event: str, detail: str) -> None:
+    _write("claude_mode", unit, mode_event=event, detail=detail)

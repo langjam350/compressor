@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 import time
 
@@ -13,6 +14,7 @@ from src.actions.context import ActionContext
 from src.integrations.tuya import TuyaController
 from src.integrations.spotify import SpotifyController
 from src.integrations.launcher import ProgramLauncher
+from src.integrations.coding_agents import create_session
 from src.network.host_server import app, run_server
 from src.network.client import NetworkClient
 from src.scheduler import Scheduler
@@ -21,6 +23,9 @@ from src.tasks import tuya_sync
 log = logging.getLogger(__name__)
 
 IDLE_RESET_SECONDS = 30
+CLAUDE_MODE_LISTEN_TIMEOUT = 300      # seconds per listen while in Claude mode
+CLAUDE_MODE_IDLE_EXIT_SECONDS = 900   # continuous silence before auto-exit
+_CLAUDE_ENTRY_RE = re.compile(r"^\s*start\s+claude(?:\s+code)?(?:\s+in\s+(?P<name>.+?))?\s*$", re.IGNORECASE)
 
 
 def build_system_prompt(location: dict, devices: list[dict], programs: list[dict] | None = None) -> str:
@@ -200,6 +205,64 @@ class Assistant:
             if entry:
                 entry["client"].reset()
 
+    def _parse_claude_mode_entry(self, text: str) -> str | None:
+        """Return '' for bare 'start claude', the project name for
+        'start claude in <name>', or None if this isn't an entry phrase."""
+        match = _CLAUDE_ENTRY_RE.match(text)
+        if not match:
+            return None
+        return (match.group("name") or "").strip()
+
+    def _run_claude_mode(self, target_name: str) -> None:
+        """Route speech into a coding-agent session until the wake word
+        is spoken ALONE (the universal escape), or idle timeout."""
+        cfg = self._config.get("coding_agent")
+        if not cfg or not cfg.get("default_workdir"):
+            self._tts.speak("Claude mode isn't configured on this unit.")
+            return
+
+        workdir = cfg["default_workdir"]
+        if target_name:
+            workdirs = {k.lower(): v for k, v in (cfg.get("workdirs") or {}).items()}
+            workdir = workdirs.get(target_name.lower())
+            if workdir is None:
+                self._tts.speak(f"I don't have a project called {target_name}.")
+                return
+
+        session = create_session(cfg)
+        session.start(workdir)
+        self._tts.speak("Starting Claude.")
+        if self._role == "host":
+            action_log.log_claude_mode(self._unit_name, "enter", workdir)
+        print(f"[Compressor] Claude mode: {workdir} — say '{self._listener.wake_word}' alone to exit.")
+
+        idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
+        try:
+            while True:
+                utterance = self._listener.listen_once(timeout=CLAUDE_MODE_LISTEN_TIMEOUT)
+                if not utterance:
+                    if time.time() >= idle_deadline:
+                        self._tts.speak("Claude mode timed out.")
+                        break
+                    continue
+                # Escape rule: wake word ALONE exits; embedded passes through.
+                if utterance.strip().strip(".,!?").lower() == self._listener.wake_word:
+                    break
+                idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
+                print(f"[Claude] > {utterance}")
+                self._tts.speak("Working on it.")
+                response = session.send(utterance)
+                if self._role == "host":
+                    action_log.log_claude_mode(self._unit_name, "exchange", f"{utterance} -> {response[:200]}")
+                print(f"[Claude] {response}")
+                self._tts.speak(response)
+                idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
+        finally:
+            session.stop()
+            if self._role == "host":
+                action_log.log_claude_mode(self._unit_name, "exit", workdir)
+            self._tts.speak("Compressor ready.")
+
     def _process_query(self, unit_name: str, text: str) -> str:
         """Handle one query end-to-end. Used for both local (host) and remote (follower) requests."""
         with self._get_unit_lock(unit_name):
@@ -247,6 +310,10 @@ class Assistant:
             for initial_query in self._listener.listen_for_commands():
                 query = initial_query
                 while query:
+                    claude_target = self._parse_claude_mode_entry(query)
+                    if claude_target is not None:
+                        self._run_claude_mode(claude_target)
+                        break  # back to the wake-word loop in normal mode
                     print(f"[Assistant] Query received: '{query}'")
                     try:
                         self._tts.speak("On it.")

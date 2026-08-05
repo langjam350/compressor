@@ -464,3 +464,159 @@ def test_tool_handler_routes_requester_and_host_names_into_action_context(mocker
     assert payload["target_unit"] == "Kitchen"
     assistant._launcher.open.assert_not_called()
     assert "Kitchen" in result
+
+
+# --- Claude mode ---
+
+CODING_AGENT_CFG = {
+    "agent": "claude_code",
+    "default_workdir": "C:\\git\\compressor",
+    "workdirs": {"jldesigns": "C:\\git\\jldesigns"},
+}
+
+
+def _make_claude_mode_assistant(mocker, listener_queries, listen_once_returns, coding_agent=True):
+    """Host assistant with a mocked coding-agent session factory."""
+    config = {
+        "wake_word": "compressor",
+        "role": "host",
+        "host_port": 8765,
+        "anthropic_api_key": "test-key",
+        "tuya": {},
+        "spotify": {},
+    }
+    if coding_agent:
+        config["coding_agent"] = dict(CODING_AGENT_CFG)
+    mocker.patch("src.assistant.load_config", return_value=config)
+    mock_tts = mocker.MagicMock()
+    mocker.patch("src.assistant.TTSEngine", return_value=mock_tts)
+    mock_listener = mocker.MagicMock()
+    mock_listener.wake_word = "compressor"
+    mock_listener.listen_for_commands.return_value = iter(listener_queries)
+    mock_listener.listen_once.side_effect = list(listen_once_returns)
+    mocker.patch("src.assistant.SpeechListener", return_value=mock_listener)
+    mocker.patch("src.assistant.NetworkClient")
+    mocker.patch("src.assistant.run_server")
+    mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.AIClient")
+    mocker.patch("src.assistant.TuyaController")
+    mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
+
+    mock_session = mocker.MagicMock()
+    mock_session.send.return_value = "Task complete."
+    mock_factory = mocker.patch("src.assistant.create_session", return_value=mock_session)
+
+    from src.assistant import Assistant
+    return Assistant(), mock_session, mock_factory, mock_tts
+
+
+def test_parse_claude_mode_entry_variants(mocker):
+    assistant, _, _, _ = _make_claude_mode_assistant(mocker, [], [])
+    assert assistant._parse_claude_mode_entry("start claude") == ""
+    assert assistant._parse_claude_mode_entry("Start Claude Code") == ""
+    assert assistant._parse_claude_mode_entry("start claude in jldesigns") == "jldesigns"
+    assert assistant._parse_claude_mode_entry("start claude code in my site") == "my site"
+    assert assistant._parse_claude_mode_entry("restart claude") is None
+    assert assistant._parse_claude_mode_entry("turn on the lights") is None
+
+
+def test_start_claude_enters_mode_and_routes_speech_to_session(mocker):
+    assistant, mock_session, mock_factory, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["add a dark mode toggle", "compressor"],
+    )
+    assistant.run()
+
+    mock_factory.assert_called_once()
+    mock_session.start.assert_called_once_with("C:\\git\\compressor")
+    mock_session.send.assert_called_once_with("add a dark mode toggle")
+    mock_tts.speak.assert_any_call("Task complete.")
+
+
+def test_wake_word_alone_exits_mode(mocker):
+    assistant, mock_session, _, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["compressor"],
+    )
+    assistant.run()
+
+    mock_session.send.assert_not_called()
+    mock_session.stop.assert_called_once()
+    mock_tts.speak.assert_any_call("Compressor ready.")
+
+
+def test_wake_word_with_punctuation_still_exits(mocker):
+    assistant, mock_session, _, _ = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["Compressor."],
+    )
+    assistant.run()
+
+    mock_session.send.assert_not_called()
+    mock_session.stop.assert_called_once()
+
+
+def test_wake_word_embedded_in_sentence_is_forwarded_not_exit(mocker):
+    assistant, mock_session, _, _ = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["add a test to compressor's launcher", "compressor"],
+    )
+    assistant.run()
+
+    mock_session.send.assert_called_once_with("add a test to compressor's launcher")
+
+
+def test_start_claude_in_named_project_uses_configured_workdir(mocker):
+    assistant, mock_session, _, _ = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude in jldesigns"],
+        listen_once_returns=["compressor"],
+    )
+    assistant.run()
+
+    mock_session.start.assert_called_once_with("C:\\git\\jldesigns")
+
+
+def test_start_claude_unknown_project_refuses_without_entering_mode(mocker):
+    assistant, mock_session, mock_factory, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude in narnia"],
+        listen_once_returns=[],
+    )
+    assistant.run()
+
+    mock_factory.assert_not_called()
+    mock_session.start.assert_not_called()
+    assert any("narnia" in str(c) for c in mock_tts.speak.call_args_list)
+
+
+def test_start_claude_without_config_refuses(mocker):
+    assistant, mock_session, mock_factory, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=[],
+        coding_agent=False,
+    )
+    assistant.run()
+
+    mock_factory.assert_not_called()
+    assert any("isn't configured" in str(c) for c in mock_tts.speak.call_args_list)
+
+
+def test_mode_utterances_never_reach_normal_ai(mocker):
+    assistant, mock_session, _, _ = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["what is 2 plus 2", "compressor"],
+    )
+    mock_process = mocker.patch.object(assistant, "_process_query")
+    assistant.run()
+
+    mock_process.assert_not_called()
+    mock_session.send.assert_called_once_with("what is 2 plus 2")
