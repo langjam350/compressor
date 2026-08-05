@@ -70,3 +70,18 @@ programs:
     launch: calc
   - name: explorer
     launch: explorer
+
+# Voice-driven coding agent ("compressor" -> "start claude"). Speech is
+# routed into a headless coding-agent session on THIS machine and the
+# responses are spoken back. Say the wake word ALONE to exit the mode.
+# agent/model are the agent-agnostic seam: v1 supports only claude_code
+# (requires the Claude Code CLI installed and authenticated).
+coding_agent:
+  agent: claude_code
+  # model: claude-sonnet-5        # optional; agent's default if unset
+  default_workdir: C:\path\to\your\project
+  workdirs:                       # spoken names for "start claude in <name>"
+    myproject: C:\path\to\your\project
+  permission_mode: acceptEdits    # never bypassed; edits auto-approved only in scoped dirs
+  max_turns: 25
+  task_timeout_seconds: 600

@@ -216,6 +216,24 @@ mappings win over new guesses) — delete its line from that unit's
 
 ---
 
+## Coding by voice (Claude mode)
+
+Say **"Compressor" → "Start Claude"** (or "Start Claude in <project>") and
+Compressor becomes a voice interface to a coding agent running on that
+machine: everything you say goes straight to the agent as a prompt, and
+its responses are spoken back. Say **"Compressor" alone** to exit — the
+wake word is the universal escape hatch (embedded mentions of the word
+inside a sentence are passed through to the agent).
+
+Configure it with the `coding_agent:` section (see `config.example.yaml`).
+The layer is agent-agnostic — which agent and model run come from config;
+currently `claude_code` is the only supported agent (requires the
+[Claude Code](https://claude.com/claude-code) CLI installed and signed in).
+Sessions are scoped to the configured project directory with
+auto-approved edits (`acceptEdits`) and never bypass permissions.
+
+---
+
 ## Running
 
 ### Host
