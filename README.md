@@ -210,7 +210,9 @@ locally. The first time you ask for a process that isn't listed under
 `processes` (e.g. "open Brave and go to Reddit"), Compressor opens it and
 remembers the mapping in that unit's `programs_learned.yaml`, so it doesn't
 need to ask again next time. `programs_learned.yaml` is created automatically
-and grows independently per unit.
+and grows independently per unit. A wrong learned mapping persists (stored
+mappings win over new guesses) — delete its line from that unit's
+`programs_learned.yaml` to make the assistant re-learn it.
 
 ---
 
@@ -237,8 +239,12 @@ Same command. The `role: follower` in your config tells it to connect to the hos
 The host needs port 8765 open for follower connections:
 
 ```powershell
-netsh advfirewall firewall add rule name="Compressor" dir=in action=allow protocol=TCP localport=8765
+netsh advfirewall firewall add rule name="Compressor" dir=in action=allow protocol=TCP localport=8765 remoteip=LocalSubnet
 ```
+
+Note that this port is unauthenticated: any device on the local network can send
+queries and commands (including opening programs) to the host. Only run this on
+a trusted home LAN.
 
 ---
 
