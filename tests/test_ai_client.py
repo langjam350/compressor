@@ -118,3 +118,18 @@ def test_reset_clears_conversation_history(mocker):
     second_call_messages = mock_create.call_args_list[1][1]["messages"]
     assert len(second_call_messages) == 1
     assert second_call_messages[0]["content"] == "What is the capital of France?"
+
+
+def test_client_passes_given_tools_to_api(mocker):
+    """AIClient sends whatever tools it was constructed with — no hardcoded imports."""
+    mock_anthropic = mocker.patch("src.ai_client.anthropic.Anthropic")
+    mock_create = mock_anthropic.return_value.messages.create
+    mock_create.return_value = make_text_response(mocker, "ok")
+
+    my_tools = [{"name": "custom_tool", "input_schema": {"type": "object", "properties": {}}}]
+
+    from src.ai_client import AIClient
+    client = AIClient("fake-key", "You are an assistant.", my_tools)
+    client.ask("hello", lambda n, i: "")
+
+    assert mock_create.call_args.kwargs["tools"] == my_tools

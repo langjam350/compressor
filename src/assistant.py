@@ -7,6 +7,7 @@ from src.config_loader import load_config
 from src.stt import SpeechListener
 from src.tts import TTSEngine
 from src.ai_client import AIClient
+from src.tools import TOOLS
 from src.integrations.tuya import TuyaController
 from src.integrations.spotify import SpotifyController
 from src.network.host_server import app, run_server
@@ -153,7 +154,7 @@ class Assistant:
         now = time.time()
         entry = self._ai_clients.get(unit_name)
         if entry is None:
-            client = AIClient(self._config["anthropic_api_key"], self._system_prompt)
+            client = AIClient(self._config["anthropic_api_key"], self._system_prompt, TOOLS)
             self._ai_clients[unit_name] = {"client": client, "last_active": now}
             return client
         if now - entry["last_active"] > IDLE_RESET_SECONDS:
