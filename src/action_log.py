@@ -61,3 +61,7 @@ def log_response(unit: str, text: str) -> None:
 
 def log_error(unit: str, context: str, error: str) -> None:
     _write("error", unit, context=context, error=error)
+
+
+def log_process_learned(unit: str, program: str, process: str, argument: str) -> None:
+    _write("process_learned", unit, program=program, process=process, argument=argument)

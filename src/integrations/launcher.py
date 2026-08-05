@@ -4,7 +4,7 @@ from pathlib import Path
 import psutil
 import yaml
 
-# from src import action_log  # enabled in learning task
+from src import action_log  # enabled in learning task
 
 
 class ProgramLauncher:
@@ -86,7 +86,7 @@ class ProgramLauncher:
             )
         except Exception as e:
             print(f"[Launcher] Could not write {self._learned_path} ({e}).")
-        # action_log.log_process_learned(self._unit_name, program_name, process, argument)  # enabled in learning task
+        action_log.log_process_learned(self._unit_name, program_name, process, argument)  # enabled in learning task
 
     # ------------------------------------------------------------------ #
     # Public API                                                          #

@@ -59,3 +59,17 @@ def test_log_functions_do_nothing_before_configure():
     from src import action_log
     action_log._logger = None
     action_log.log_query("Kitchen", "hello")  # must not raise
+
+
+def test_log_process_learned_writes_expected_fields(tmp_path):
+    from src import action_log
+    log_path = tmp_path / "actions.txt"
+    action_log.configure(str(log_path))
+    action_log.log_process_learned("Kitchen", "brave", "reddit", "https://reddit.com")
+
+    record = json.loads(log_path.read_text().strip().splitlines()[0])
+    assert record["event"] == "process_learned"
+    assert record["unit"] == "Kitchen"
+    assert record["program"] == "brave"
+    assert record["process"] == "reddit"
+    assert record["argument"] == "https://reddit.com"
