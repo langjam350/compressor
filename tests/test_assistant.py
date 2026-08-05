@@ -344,3 +344,41 @@ def test_assistant_passes_wake_model_config_to_listener(mocker):
     kwargs = mock_listener_cls.call_args.kwargs
     assert kwargs["wake_model_path"] == "models/custom.onnx"
     assert kwargs["wake_threshold"] == 0.7
+
+
+def test_tool_exception_aborts_query_with_generic_apology(mocker):
+    """A crashing tool propagates out of _tool_handler; _process_query catches it."""
+    mocker.patch("src.assistant.load_config", return_value={
+        "wake_word": "compressor",
+        "role": "host",
+        "host_port": 8765,
+        "anthropic_api_key": "test-key",
+        "tuya": {},
+        "spotify": {},
+    })
+    mocker.patch("src.assistant.TTSEngine", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.SpeechListener", return_value=mocker.MagicMock())
+    mocker.patch("src.assistant.NetworkClient")
+    mocker.patch("src.assistant.run_server")
+    mocker.patch("src.assistant.threading.Thread")
+    mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.TuyaController")
+    mocker.patch("src.assistant.Scheduler")
+    mocker.patch("src.assistant.action_log.configure")
+    mock_log_error = mocker.patch("src.assistant.action_log.log_error")
+
+    mock_ai = mocker.MagicMock()
+    # ai.ask invokes the tool handler it's given, which raises; the exception
+    # must escape ask() and be caught by _process_query.
+    def ask(text, handler):
+        return handler("control_tuya_device", {"device_name": "Lamp", "action": "on"})
+    mock_ai.ask.side_effect = ask
+    mocker.patch("src.assistant.AIClient", return_value=mock_ai)
+    mocker.patch.dict("src.assistant.ACTIONS", {"control_tuya_device": mocker.Mock(side_effect=RuntimeError("boom"))})
+
+    from src.assistant import Assistant
+    assistant = Assistant()
+    result = assistant._process_query("host", "turn on the lamp")
+
+    assert result == "Sorry, something went wrong."
+    mock_log_error.assert_called_once_with("host", "ai_ask", "boom")

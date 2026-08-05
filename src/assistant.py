@@ -203,10 +203,7 @@ class Assistant:
             config=self._config,
             host_unit_name=self._unit_name,
         )
-        try:
-            result = action(ctx, tool_input)
-        except Exception as e:
-            result = f"Tool {tool_name} failed ({e})."
+        result = action(ctx, tool_input)
         print(f"[Tool] {tool_name} result: {result}")
         action_log.log_tool_call(unit_name, tool_name, tool_input, result)
         return result
