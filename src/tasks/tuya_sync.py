@@ -51,6 +51,14 @@ def run(on_complete: Callable[[list[dict]], None] | None = None) -> None:
     raw = cloud.getdevices(verbose=True) or {}
     devices: list[dict] = raw.get("result", []) if isinstance(raw, dict) else (raw or [])
 
+    if isinstance(raw, dict) and raw.get("success") is False:
+        log.warning(
+            "[TuyaSync] Cloud error: %s (code %s)",
+            raw.get("msg", "unknown error"),
+            raw.get("code", "?"),
+        )
+        return
+
     if not devices:
         log.warning("[TuyaSync] Cloud returned no devices.")
         return

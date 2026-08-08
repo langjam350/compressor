@@ -500,7 +500,8 @@ def _make_claude_mode_assistant(mocker, listener_queries, listen_once_returns, c
     mocker.patch("src.assistant.SpeechListener", return_value=mock_listener)
     mocker.patch("src.assistant.NetworkClient")
     mocker.patch("src.assistant.run_server")
-    mocker.patch("src.assistant.threading.Thread")
+    # threading.Thread stays REAL here: Claude mode runs its task worker on a
+    # thread, and the host-server thread just calls the mocked run_server.
     mocker.patch("src.assistant.time.sleep")
     mocker.patch("src.assistant.AIClient")
     mocker.patch("src.assistant.TuyaController")
@@ -681,30 +682,79 @@ def test_remote_query_cannot_enter_claude_mode(mocker):
 
 
 def test_claude_mode_idle_timeout_exits_and_speaks(mocker):
-    """Continuous silence past CLAUDE_MODE_IDLE_EXIT_SECONDS auto-exits the
-    mode, stops the session, and speaks a timeout message. time.time() is
-    patched with an exact 3-call sequence (initial deadline + two idle
-    checks) paired with two falsy listen_once returns, deliberately scoped
-    to this test's call count so it doesn't entangle with time.time() usage
-    elsewhere in the assistant (e.g. _get_ai_client, which isn't exercised
-    on this code path)."""
-    from src.assistant import CLAUDE_MODE_IDLE_EXIT_SECONDS
-
+    """Continuous silence past CLAUDE_MODE_IDLE_EXIT_SECONDS (patched to 0 so
+    the very first silent listen is already past the deadline) auto-exits the
+    mode, stops the session, and speaks a timeout message."""
     assistant, mock_session, _, mock_tts = _make_claude_mode_assistant(
         mocker,
         listener_queries=["start claude"],
-        listen_once_returns=[None, None],
+        listen_once_returns=[None],
     )
-    base = 1_000_000.0
-    mocker.patch(
-        "src.assistant.time.time",
-        side_effect=[base, base, base + CLAUDE_MODE_IDLE_EXIT_SECONDS + 1],
-    )
+    mocker.patch("src.assistant.CLAUDE_MODE_IDLE_EXIT_SECONDS", 0)
 
     assistant.run()
 
     mock_session.stop.assert_called_once()
     mock_tts.speak.assert_any_call("Claude mode timed out.")
+
+
+def test_follow_up_while_task_running_is_queued_and_both_responses_spoken(mocker):
+    """A second utterance arriving while a task is still running gets 'Queued.'
+    feedback, and both responses are spoken once the tasks finish — the mode
+    no longer blocks the voice loop on session.send()."""
+    import threading as _threading
+
+    gate = _threading.Event()
+    responses = {"task one": "First done.", "task two": "Second done."}
+
+    assistant, mock_session, _, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=[],
+    )
+    mock_session.send.side_effect = lambda text: (gate.wait(timeout=5), responses[text])[1]
+
+    listens = iter(["task one", "task two", "exit-now"])
+
+    def scripted_listen(**kwargs):
+        value = next(listens)
+        if value == "exit-now":
+            gate.set()  # let the worker finish before the exit drain
+            return "compressor"
+        return value
+
+    assistant._listener.listen_once.side_effect = scripted_listen
+
+    assistant.run()
+
+    assert mock_session.send.call_count == 2
+    mock_tts.speak.assert_any_call("Working on it.")
+    mock_tts.speak.assert_any_call("Queued.")
+    mock_tts.speak.assert_any_call("First done.")
+    mock_tts.speak.assert_any_call("Second done.")
+
+
+def test_exit_while_task_running_cancels_and_discards_result(mocker):
+    """Wake word alone while a task is in flight cancels the session's work;
+    the cancelled task's empty response is discarded, never spoken."""
+    import threading as _threading
+
+    gate = _threading.Event()
+
+    assistant, mock_session, _, mock_tts = _make_claude_mode_assistant(
+        mocker,
+        listener_queries=["start claude"],
+        listen_once_returns=["long task", "compressor"],
+    )
+    mock_session.send.side_effect = lambda text: (gate.wait(timeout=5), "")[1]
+    mock_session.cancel.side_effect = gate.set
+
+    assistant.run()
+
+    mock_session.cancel.assert_called()
+    mock_session.stop.assert_called_once()
+    assert mocker.call("") not in mock_tts.speak.call_args_list
+    mock_tts.speak.assert_any_call("Compressor ready.")
 
 
 def test_mode_exchange_and_lifecycle_are_action_logged(mocker):

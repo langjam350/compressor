@@ -10,6 +10,7 @@ from typing import Protocol
 class CodingAgentSession(Protocol):
     def start(self, workdir: str) -> None: ...
     def send(self, text: str) -> str: ...
+    def cancel(self) -> None: ...  # kill in-flight work; pending send() returns ""
     def stop(self) -> None: ...
 
 
@@ -24,6 +25,9 @@ class _UnsupportedSession:
 
     def send(self, text: str) -> str:
         return f"Coding agent '{self._agent_name}' isn't supported on this unit."
+
+    def cancel(self) -> None:
+        pass
 
     def stop(self) -> None:
         pass

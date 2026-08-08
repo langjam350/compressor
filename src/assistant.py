@@ -1,4 +1,5 @@
 import logging
+import queue
 import re
 import threading
 import time
@@ -23,8 +24,8 @@ from src.tasks import tuya_sync
 log = logging.getLogger(__name__)
 
 IDLE_RESET_SECONDS = 30
-CLAUDE_MODE_LISTEN_TIMEOUT = 300      # seconds per listen while in Claude mode
-CLAUDE_MODE_IDLE_EXIT_SECONDS = 900   # continuous silence before auto-exit
+CLAUDE_MODE_LISTEN_CHUNK_SECONDS = 10  # short chunks so finished tasks get spoken promptly
+CLAUDE_MODE_IDLE_EXIT_SECONDS = 900    # continuous inactivity before auto-exit
 _CLAUDE_ENTRY_RE = re.compile(r"^\s*start\s+claude(?:\s+code)?(?:\s+in\s+(?P<name>.+?))?\s*$", re.IGNORECASE)
 
 
@@ -225,6 +226,11 @@ class Assistant:
         """Route speech into a coding-agent session until the wake word
         is spoken ALONE (the universal escape), or idle timeout.
 
+        Tasks run on a background worker thread so the mic keeps listening
+        while the agent works: follow-ups arriving mid-task are queued,
+        finished responses are spoken as they complete, and exiting cancels
+        any in-flight task (a cancelled task's empty response is discarded).
+
         Must never let an exception escape — a malformed coding_agent config
         (e.g. a factory TypeError from a bad max_turns value) degrades to a
         spoken error instead of killing the whole process."""
@@ -242,10 +248,46 @@ class Assistant:
                 return
 
         session = None
+        worker = None
+        pending: queue.Queue = queue.Queue()    # utterances awaiting the worker (None = shut down)
+        results: queue.Queue = queue.Queue()    # (utterance, response) pairs ready to speak
+        outstanding = 0                         # enqueued but not yet drained
+
+        def _drain_results() -> int:
+            """Speak and log every finished task; return how many were drained."""
+            nonlocal outstanding
+            drained = 0
+            while True:
+                try:
+                    utterance, response = results.get_nowait()
+                except queue.Empty:
+                    return drained
+                drained += 1
+                outstanding -= 1
+                if not response:
+                    continue  # cancelled task — discard silently
+                if self._role == "host":
+                    action_log.log_claude_mode(self._unit_name, "exchange", f"{utterance} -> {response[:200]}")
+                print(f"[Claude] {response}")
+                self._speak_safe(response)
+
+        def _worker_loop() -> None:
+            while True:
+                item = pending.get()
+                if item is None:
+                    return
+                try:
+                    response = session.send(item)
+                except Exception as e:  # send() shouldn't raise, but a dead worker would strand the mode
+                    response = f"Claude Code failed ({e})."
+                results.put((item, response))
+
         try:
             try:
                 session = create_session(cfg)
                 session.start(workdir)
+                worker = threading.Thread(target=_worker_loop, daemon=True, name="ClaudeModeWorker")
+                worker.start()
                 self._speak_safe("Starting Claude.")
                 if self._role == "host":
                     action_log.log_claude_mode(self._unit_name, "enter", workdir)
@@ -253,9 +295,15 @@ class Assistant:
 
                 idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
                 while True:
-                    utterance = self._listener.listen_once(timeout=CLAUDE_MODE_LISTEN_TIMEOUT, phrase_time_limit=30)
+                    if _drain_results():
+                        idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
+                    utterance = self._listener.listen_once(
+                        timeout=CLAUDE_MODE_LISTEN_CHUNK_SECONDS, phrase_time_limit=30
+                    )
                     if not utterance:
-                        if time.time() >= idle_deadline:
+                        if outstanding > 0:
+                            idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS  # running task = activity
+                        elif time.time() >= idle_deadline:
                             self._speak_safe("Claude mode timed out.")
                             break
                         time.sleep(1)
@@ -264,17 +312,24 @@ class Assistant:
                     if utterance.strip().strip(".,!?").lower() == self._listener.wake_word:
                         break
                     print(f"[Claude] > {utterance}")
-                    self._speak_safe("Working on it.")
-                    response = session.send(utterance)
-                    if self._role == "host":
-                        action_log.log_claude_mode(self._unit_name, "exchange", f"{utterance} -> {response[:200]}")
-                    print(f"[Claude] {response}")
-                    self._speak_safe(response)
+                    self._speak_safe("Queued." if outstanding > 0 else "Working on it.")
+                    pending.put(utterance)
+                    outstanding += 1
                     idle_deadline = time.time() + CLAUDE_MODE_IDLE_EXIT_SECONDS
             except Exception as e:
                 print(f"[Claude] mode error: {e}")
                 self._speak_safe("Claude mode hit an error.")
         finally:
+            cancel = getattr(session, "cancel", None)
+            if callable(cancel):
+                try:
+                    cancel()  # kill any in-flight task; its send() returns "" fast
+                except Exception as e:
+                    print(f"[Claude] session cancel failed: {e}")
+            pending.put(None)
+            if worker is not None:
+                worker.join(timeout=30)
+            _drain_results()  # speak whatever finished but wasn't voiced yet
             if session is not None:
                 try:
                     session.stop()

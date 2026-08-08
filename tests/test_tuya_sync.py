@@ -80,6 +80,30 @@ def test_sync_calls_on_complete_with_updated_devices(mocker, tmp_path):
     assert devices[0]["local_key"] == "another-real-key"
 
 
+def test_sync_logs_cloud_error_message_when_request_fails(mocker, tmp_path, caplog):
+    """An unsuccessful cloud response (e.g. expired IoT Core subscription) must
+    surface Tuya's own error message, not the generic 'no devices' warning."""
+    mocker.patch("src.tasks.tuya_sync._PROJECT_ROOT", tmp_path)
+    _write_tinytuya_json(tmp_path)
+    _write_config_yaml(tmp_path, [])
+
+    mock_cloud_cls = mocker.patch("src.tasks.tuya_sync.tinytuya.Cloud")
+    mock_cloud_cls.return_value.getdevices.return_value = {
+        "result": [],
+        "code": 28841002,
+        "msg": "IoT Core service subscription has expired.",
+        "success": False,
+    }
+
+    from src.tasks import tuya_sync
+    with caplog.at_level("WARNING"):
+        tuya_sync.run()
+
+    assert "IoT Core service subscription has expired." in caplog.text
+    assert "28841002" in caplog.text
+    assert "Cloud returned no devices" not in caplog.text
+
+
 def test_sync_skips_when_cloud_returns_no_devices(mocker, tmp_path, caplog):
     mocker.patch("src.tasks.tuya_sync._PROJECT_ROOT", tmp_path)
     _write_tinytuya_json(tmp_path)

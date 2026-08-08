@@ -221,9 +221,20 @@ mappings win over new guesses) — delete its line from that unit's
 Say **"Compressor" → "Start Claude"** (or "Start Claude in <project>") and
 Compressor becomes a voice interface to a coding agent running on that
 machine: everything you say goes straight to the agent as a prompt, and
-its responses are spoken back. Say **"Compressor" alone** to exit — the
-wake word is the universal escape hatch (embedded mentions of the word
-inside a sentence are passed through to the agent).
+its responses are spoken back.
+
+Tasks run in the background — the microphone keeps listening while the
+agent works, and the console streams what it's doing live (one
+`[Claude] > <tool>: <target>` line per action), so you can watch the work
+on screen while you talk. Speak again mid-task and the new request is
+queued ("Queued.") and sent as soon as the current one finishes; each
+finished task's response is spoken when it completes.
+
+Say **"Compressor" alone** to exit — the wake word is the universal
+escape hatch (embedded mentions of the word inside a sentence are passed
+through to the agent). Exiting while a task is still running **cancels
+it** and discards its result, so if you want the work to finish, stay in
+the mode (silence is fine — a running task never idle-times-out the mode).
 
 Configure it with the `coding_agent:` section (see `config.example.yaml`).
 The layer is agent-agnostic — which agent and model run come from config;
