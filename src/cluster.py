@@ -163,7 +163,7 @@ class Coordinator:
         self_name: str,
         *,
         eligible: bool = True,
-        prober: Callable[[Unit, float], bool] = probe,
+        prober: Optional[Callable[[Unit, float], bool]] = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         probe_timeout: float = DEFAULT_PROBE_TIMEOUT,
         promote_after_misses: int = PROMOTE_AFTER_MISSES,
@@ -171,7 +171,9 @@ class Coordinator:
         self.registry = registry
         self.unit = registry.get(self_name)
         self.eligible = eligible
-        self._probe = prober
+        # Resolved here rather than as a default argument so tests can patch
+        # the module-level probe().
+        self._probe = probe if prober is None else prober
         self._poll_seconds = poll_seconds
         self._probe_timeout = probe_timeout
         self._promote_after_misses = max(1, promote_after_misses)

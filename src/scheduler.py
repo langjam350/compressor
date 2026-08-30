@@ -58,26 +58,38 @@ class Scheduler:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            now = datetime.now()
-            today = now.date()
-
-            for task in self._tasks:
-                scheduled = now.replace(
-                    hour=task.hour, minute=task.minute, second=0, microsecond=0
-                )
-                already_ran = self._last_run.get(task.name) == today
-
-                if now >= scheduled and not already_ran:
-                    self._last_run[task.name] = today
-                    log.info("[Scheduler] Firing task '%s'", task.name)
-                    threading.Thread(
-                        target=self._run_task,
-                        args=(task,),
-                        daemon=True,
-                        name=f"Task-{task.name}",
-                    ).start()
-
+            self.fire_due()
             self._stop.wait(self._CHECK_INTERVAL)
+
+    def fire_due(self, now: datetime | None = None) -> list[str]:
+        """Fire every task whose time has passed today and hasn't run yet.
+
+        Each fires on its own daemon thread so a slow task never delays the
+        next poll. Returns the names fired, which is what makes one pass of
+        the loop testable without the timing.
+        """
+        now = now or datetime.now()
+        today = now.date()
+        fired = []
+
+        for task in self._tasks:
+            scheduled = now.replace(
+                hour=task.hour, minute=task.minute, second=0, microsecond=0
+            )
+            already_ran = self._last_run.get(task.name) == today
+
+            if now >= scheduled and not already_ran:
+                self._last_run[task.name] = today
+                log.info("[Scheduler] Firing task '%s'", task.name)
+                fired.append(task.name)
+                threading.Thread(
+                    target=self._run_task,
+                    args=(task,),
+                    daemon=True,
+                    name=f"Task-{task.name}",
+                ).start()
+
+        return fired
 
     def _run_task(self, task: _Task) -> None:
         try:

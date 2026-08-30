@@ -36,15 +36,19 @@ audio to a big-box smart speaker.
 ## Architecture
 
 ```
-[Host machine]  ←──── runs FastAPI server (port 8765)
-    │                  handles AI, Tuya, Spotify
-    │                  broadcasts commands to followers via WebSocket
+[Owner: Personal Desktop]  ←──── priority 1 in units.json
+    │                             runs FastAPI server (port 8765)
+    │                             handles AI, Tuya, Spotify, scheduled jobs
+    │                             broadcasts commands to followers via WebSocket
     │
-    └──── [Follower machine]  ←── listens for wake word
-    └──── [Follower machine]  ←── plays back Spotify on local device
+    └──── [Personal Laptop]  ←── priority 2: follows while the desktop is up,
+    │                            takes over automatically when it goes down
+    └──── [Follower machine] ←── listens for wake word, relays to the owner
 ```
 
-The **Host** runs the AI and integration logic and is the only machine that needs an Anthropic API key — **Followers** hold zero Anthropic credentials. A Follower captures a spoken command, sends it to the Host over `POST /query` (`{unit_name, text}` in, `{response}` out), and speaks back whatever the Host returns. Followers also stay connected to the Host over WebSocket so that "play everywhere" commands and targeted actions (like opening a program on a specific follower) can be broadcast to the right unit.
+Exactly one unit **owns** the system at a time. The owner runs the AI and integration logic and is the only machine that needs an Anthropic API key — followers hold zero Anthropic credentials. A follower captures a spoken command, sends it to the owner over `POST /query` (`{unit_name, text}` in, `{response}` out), and speaks back whatever comes home. Followers also stay connected over WebSocket so that "play everywhere" commands and targeted actions (like opening a program on a specific unit) can be broadcast to the right machine.
+
+Which unit owns the system is **elected at runtime** from the tier list in `units.json`, not fixed in config — see [Ownership and failover](#ownership-and-failover).
 
 Wake-word detection runs locally on every unit via [openWakeWord](https://github.com/dscripka/openWakeWord) once you've trained a model for "compressor" (see [docs/WAKE-WORD-TRAINING.md](docs/WAKE-WORD-TRAINING.md)); until then, each unit falls back to cloud speech-to-text for wake detection.
 
@@ -83,10 +87,31 @@ Copy the example config and edit it:
 cp config.example.yaml config.yaml
 ```
 
-### Host config (`config.yaml`)
+### Unit tier list (`units.json`)
+
+Every unit shares one `units.json`, listing every machine that may own the
+system, best first. It holds no secrets and is committed to the repo — copy the
+same file to every unit.
+
+```json
+{
+  "units": [
+    { "name": "Personal Desktop", "priority": 1, "host_ip": "192.168.0.100", "host_port": 8765 },
+    { "name": "Personal Laptop",  "priority": 2, "host_ip": "192.168.0.166", "host_port": 8765 }
+  ]
+}
+```
+
+Priorities must be unique. `host_ip` is each machine's LAN IP (`ipconfig` on
+Windows). Start a unit with the name that matches its entry:
+
+```bash
+python main.py "Personal Laptop"
+```
+
+### Unit config (`config.yaml`)
 
 ```yaml
-role: host
 wake_word: compressor
 
 # Trained openWakeWord model (see docs/WAKE-WORD-TRAINING.md). Falls back
@@ -122,30 +147,50 @@ programs:
       youtube: https://youtube.com
 ```
 
-`anthropic_api_key` is required on the Host and is host-only — Followers never need one.
+`anthropic_api_key` decides whether a unit is **eligible to own the system**. A
+unit without one can still listen and relay, but will never take over — so give
+it to every machine you want in the failover chain, and leave it off the ones
+you don't. Tuya and Spotify credentials only matter on a unit that may own the
+system, for the same reason.
 
-### Follower config (`config.yaml`)
+`programs` is per-unit: a command spoken to a machine opens the program on that
+machine, so each one only needs entries for what it can actually launch.
+`wake_model_path`/`wake_threshold` are optional everywhere; omit them to use the
+cloud-STT wake fallback.
 
-```yaml
-role: follower
-wake_word: compressor
-wake_model_path: models/compressor.onnx
-wake_threshold: 0.5
-host_ip: 192.168.1.100    # LAN IP of the Host machine
-host_port: 8765
+---
 
-unit_name: Kitchen         # required — identifies this unit to the Host and
-                            # attributes host-side action-log entries to it
+## Ownership and failover
 
-# Optional — programs this specific follower can open by voice. Each unit
-# has its own list; a command spoken to a follower opens the program there.
-programs:
-  - name: notepad
-    launch: notepad
-    process_name: notepad
-```
+The unit at priority 1 in `units.json` owns the system whenever it is online.
+If it goes down, the next eligible unit takes over automatically, and hands
+ownership back when the higher unit returns. Nothing needs to be reconfigured
+and no unit needs restarting.
 
-Followers do **not** need Tuya, Spotify, or an `anthropic_api_key` in their config — those run on the Host only. `unit_name` is required for every Follower and should be unique per unit. `wake_model_path`/`wake_threshold` are optional on every unit (host and followers alike); omit them to use the cloud-STT wake fallback.
+How it works: every unit runs the FastAPI server all the time and answers
+`GET /health` with `{unit_name, owner, priority}`. On startup, and then every 15
+seconds, a unit probes the units listed *ahead* of it. If one answers claiming
+ownership, this unit follows it; if none do, this unit takes over.
+
+- **Taking over** waits for two consecutive missed rounds (about 30 seconds), so
+  a single dropped packet doesn't churn the host stack.
+- **Standing down** happens on the first round that sees a higher unit return —
+  yielding is always safe, so it isn't delayed.
+- Both transitions are spoken aloud and recorded in `logs/actions.txt` as
+  `ownership` events.
+
+Because the tier list is a strict order that every unit reads identically, no
+negotiation is needed — each machine reaches the same answer on its own.
+
+Setting `role: host` or `role: follower` in `config.yaml` pins a unit and skips
+the election entirely. Use that only for debugging or for a unit that must never
+take over.
+
+**Troubleshooting:** if two units both think they own the system for longer than
+a minute, they can't reach each other — check `host_ip` in `units.json` against
+`ipconfig` on each machine and confirm port 8765 is open through the firewall
+(see below). If a unit refuses to start with "is not in the registry", the name
+passed to `python main.py` doesn't match any `name` in `units.json`.
 
 ---
 
@@ -284,25 +329,21 @@ allowlists before pointing a hot microphone at it.
 
 ## Running
 
-### Host
+Every unit runs the same command — pass the machine's name from `units.json`:
 
 ```bash
-py main.py
+py main.py "Personal Desktop"     # on the home machine
+py main.py "Personal Laptop"      # on the laptop
 ```
 
-The host starts its FastAPI server on port 8765, then waits for the wake word.
-
-### Follower
-
-```bash
-py main.py
-```
-
-Same command. The `role: follower` in your config tells it to connect to the host instead of starting a server.
+Each unit starts its FastAPI server on port 8765, elects its role from the tier
+list, prints who owns the system, then waits for the wake word. No per-machine
+role setting is involved.
 
 ### Firewall (Windows)
 
-The host needs port 8765 open for follower connections:
+Every unit needs port 8765 open — followers connect to the owner, and the owner
+is probed by the units below it in the tier list:
 
 ```powershell
 netsh advfirewall firewall add rule name="Compressor" dir=in action=allow protocol=TCP localport=8765 remoteip=LocalSubnet
@@ -348,6 +389,6 @@ Commands are always handled by the unit you spoke to — an "open a program" com
 
 **Spotify "No devices found"** — Spotify must be open and active on at least one device before issuing a play command.
 
-**Follower can't connect to host** — Confirm `host_ip` in the follower config matches the host's LAN IP (`ipconfig` on Windows). Check the firewall rule above.
+**Follower can't connect to the owner** — Confirm each unit's `host_ip` in `units.json` matches that machine's LAN IP (`ipconfig` on Windows), and that `units.json` is identical on every unit. Check the firewall rule above.
 
 **Wake word not detected** — Check that your microphone is set as the default input device in your OS audio settings. If you haven't trained a model yet (`wake_model_path` file doesn't exist), Compressor falls back to cloud STT for wake detection, which is slower and less reliable — see [docs/WAKE-WORD-TRAINING.md](docs/WAKE-WORD-TRAINING.md). If a model is trained but wakes are missed or too frequent, adjust `wake_threshold` (lower = more sensitive).

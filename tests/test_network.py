@@ -77,6 +77,57 @@ def test_network_client_query_on_failure_returns_fallback(mocker):
     assert result == "Sorry, I can't reach the host right now."
 
 
+def test_health_reports_unit_name_and_ownership():
+    from src.network.host_server import app
+    app.state.unit_name = "Personal Laptop"
+    app.state.owner = True
+    app.state.priority = 2
+    client = TestClient(app)
+
+    resp = client.get("/health")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"unit_name": "Personal Laptop", "owner": True, "priority": 2}
+
+
+def test_health_reports_a_follower_as_alive_but_not_owner():
+    from src.network.host_server import app
+    app.state.unit_name = "Personal Laptop"
+    app.state.owner = False
+    client = TestClient(app)
+
+    assert client.get("/health").json()["owner"] is False
+
+
+def test_set_host_repoints_http_and_websocket():
+    from src.network.client import NetworkClient
+    client = NetworkClient("192.168.0.100", 8765)
+
+    assert client.set_host("192.168.0.166", 8765) is True
+    assert client._base == "http://192.168.0.166:8765"
+    assert client._ws_url == "ws://192.168.0.166:8765/ws"
+
+
+def test_set_host_is_a_no_op_when_the_host_is_unchanged():
+    from src.network.client import NetworkClient
+    client = NetworkClient("192.168.0.100", 8765)
+
+    assert client.set_host("192.168.0.100") is False
+
+
+def test_set_host_closes_the_open_websocket_so_it_reconnects(mocker):
+    from src.network.client import NetworkClient
+    client = NetworkClient("192.168.0.100", 8765)
+    client._ws = mocker.MagicMock()
+    client._loop = mocker.MagicMock()
+    run_coro = mocker.patch("src.network.client.asyncio.run_coroutine_threadsafe")
+
+    client.set_host("192.168.0.166")
+
+    run_coro.assert_called_once()
+    client._ws.close.assert_called_once()
+
+
 def test_query_endpoint_calls_query_handler_and_returns_result():
     from src.network.host_server import app
     app.state.query_handler = lambda unit_name, text: f"handled {unit_name}: {text}"
