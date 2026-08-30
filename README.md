@@ -17,7 +17,14 @@ audio to a big-box smart speaker.
   (cloud-STT fallback until you train the model — see
   [docs/WAKE-WORD-TRAINING.md](docs/WAKE-WORD-TRAINING.md))
 - Natural-language smart-home control of Tuya lights/plugs on your LAN
-- Spotify playback, including house-wide playback across units
+- Alexa-style music lookup — songs, artists, albums, and playlists on
+  Spotify, with an automatic YouTube fallback when Spotify has no good
+  match (plus configurable words that jump straight to a YouTube
+  channel's newest upload)
+- Starts and stops the Spotify app itself by voice, on the host and every
+  follower at once — and auto-opens it when you ask for music and no
+  Spotify device is running yet
+- House-wide playback across units
 - Opens programs by voice on whichever machine you spoke to
   ("compressor, open Brave and go to YouTube") — and learns new
   program actions the first time you use them
@@ -103,7 +110,7 @@ tuya:
 spotify:
   client_id: YOUR_SPOTIFY_CLIENT_ID
   client_secret: YOUR_SPOTIFY_CLIENT_SECRET
-  redirect_uri: http://localhost:8888/callback
+  redirect_uri: http://127.0.0.1:8888/callback
 
 # Programs this machine can open by voice — see "Programs by voice" below.
 programs:
@@ -179,9 +186,35 @@ py -m tinytuya wizard
 ## Spotify Setup
 
 1. Go to [developer.spotify.com](https://developer.spotify.com) → Dashboard → Create app
-2. Set the redirect URI to `http://localhost:8888/callback` (must match your config exactly)
+2. Set the redirect URI to `http://127.0.0.1:8888/callback` (must match your config exactly — Spotify no longer accepts `localhost` for new apps)
 3. Copy the **Client ID** and **Client Secret** into `config.yaml`
 4. On first run, a browser window will open for OAuth login — authorize it once and the token is cached
+
+---
+
+## Music: how playback is resolved
+
+"Compressor, play ..." works like Alexa's lookup:
+
+1. **Channel-default words first.** If the query contains a word listed
+   under `youtube.channel_defaults` in the host's `config.yaml`, the most
+   recent upload of that channel is played from YouTube — no search at
+   all. Values are a channel URL or `@handle`.
+2. **Spotify search.** Songs, artists, albums, and playlists are all
+   searched and the best name-match wins — an artist match plays their
+   catalog, an album match plays the album. Saying what you mean helps
+   ("play the album ...", "play some Radiohead").
+3. **YouTube fallback.** If Spotify's best match is poor (or you say
+   "on YouTube"), the host looks the query up on YouTube via yt-dlp (no
+   API key needed) and opens the result in the browser of the unit you
+   spoke to — or every unit for "house speakers". This needs a program
+   with the `browser` alias in that unit's `programs:` list.
+
+The Spotify **application** itself is also voice-controllable:
+"open Spotify" / "close Spotify" starts or stops the app on the host
+**and every follower**. And when you ask for music while no Spotify
+device is running, Compressor auto-opens the app everywhere and waits
+(up to ~20s) for a device to appear before playing.
 
 ---
 

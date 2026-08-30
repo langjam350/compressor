@@ -24,18 +24,35 @@ TOOLS = [
     },
     {
         "name": "control_spotify",
-        "description": "Control Spotify music playback. Use house_speakers=true when the user says 'house speakers' or wants music everywhere.",
+        "description": (
+            "Play and control music. 'play' with a query searches Spotify for songs, artists, "
+            "albums, or playlists and automatically falls back to YouTube when Spotify has no "
+            "good match (set source='youtube' if the user explicitly asks for YouTube). "
+            "'start_app'/'stop_app' open or close the Spotify application itself on every "
+            "machine in the house ('open Spotify', 'close Spotify'). Use house_speakers=true "
+            "when the user says 'house speakers' or wants music everywhere."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["play", "pause", "next", "previous", "volume_up", "volume_down"],
-                    "description": "Playback action"
+                    "enum": ["play", "pause", "next", "previous", "volume_up", "volume_down", "start_app", "stop_app"],
+                    "description": "Playback action, or start_app/stop_app to open/close the Spotify application"
                 },
                 "query": {
                     "type": "string",
                     "description": "Search term for the 'play' action, e.g. 'jazz', 'Radiohead', 'chill playlist'"
+                },
+                "query_type": {
+                    "type": "string",
+                    "enum": ["song", "artist", "album", "playlist", "auto"],
+                    "description": "What kind of thing the user asked for, when their phrasing makes it clear ('play the song ...', 'play some Radiohead' = artist, 'put on the album ...'). Use 'auto' when unsure."
+                },
+                "source": {
+                    "type": "string",
+                    "enum": ["auto", "spotify", "youtube"],
+                    "description": "Music source. 'auto' (default) tries Spotify first with YouTube fallback; use 'youtube' or 'spotify' only when the user names the service."
                 },
                 "house_speakers": {
                     "type": "boolean",

@@ -7,6 +7,12 @@ from pydantic import BaseModel
 
 app = FastAPI()
 app.state.query_handler = None
+# Every unit runs this server, whether or not it currently owns the system,
+# so that peers can probe /health at any time. `owner` is what distinguishes
+# the unit actually doing the host's job from one that is merely alive.
+app.state.unit_name = None
+app.state.owner = False
+app.state.priority = None
 _connected_clients: list[WebSocket] = []
 
 
@@ -37,6 +43,16 @@ async def info():
         }
     except Exception:
         return {"city": "Unknown", "region": "Unknown", "country": "Unknown", "timezone": "Unknown"}
+
+
+@app.get("/health")
+def health():
+    """Liveness plus ownership, for the cluster election (see src/cluster.py)."""
+    return {
+        "unit_name": app.state.unit_name,
+        "owner": bool(app.state.owner),
+        "priority": app.state.priority,
+    }
 
 
 @app.post("/query", response_model=QueryResponse)

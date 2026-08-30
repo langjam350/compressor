@@ -1,0 +1,18 @@
+{
+  "units": [
+    {
+      "name": "Personal Desktop",
+      "priority": 1,
+      "host_ip": "192.168.0.100",
+      "host_port": 8765,
+      "note": "Home unit. Owns the system whenever it is online. CONFIRM THIS IP with ipconfig on the desktop before relying on failover."
+    },
+    {
+      "name": "Personal Laptop",
+      "priority": 2,
+      "host_ip": "192.168.0.166",
+      "host_port": 8765,
+      "note": "Stands in for the desktop while it is offline, and steps back down when it returns."
+    }
+  ]
+}

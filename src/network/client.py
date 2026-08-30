@@ -9,11 +9,38 @@ import websockets
 
 class NetworkClient:
     def __init__(self, host_ip: str, host_port: int = 8765):
+        self._host_ip = host_ip
+        self._host_port = host_port
         self._base = f"http://{host_ip}:{host_port}"
         self._ws_url = f"ws://{host_ip}:{host_port}/ws"
         self._on_message: Optional[Callable[[dict], None]] = None
         self._ws = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def set_host(self, host_ip: str, host_port: Optional[int] = None) -> bool:
+        """Point this client at a different host after an ownership change.
+
+        Closes the current WebSocket so the listen loop reconnects to the new
+        URL on its next pass. Returns True when the host actually changed.
+        """
+        port = self._host_port if host_port is None else host_port
+        if host_ip == self._host_ip and port == self._host_port:
+            return False
+
+        self._host_ip = host_ip
+        self._host_port = port
+        self._base = f"http://{host_ip}:{port}"
+        self._ws_url = f"ws://{host_ip}:{port}/ws"
+
+        ws, loop = self._ws, self._loop
+        if ws is not None and loop is not None:
+            # _listen() re-reads self._ws_url every pass, so ending the current
+            # connection is all it takes to migrate.
+            try:
+                asyncio.run_coroutine_threadsafe(ws.close(), loop)
+            except Exception as e:
+                print(f"[Network] Could not close old WebSocket: {e}")
+        return True
 
     def get_info(self) -> dict:
         try:

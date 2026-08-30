@@ -67,5 +67,9 @@ def log_process_learned(unit: str, program: str, process: str, argument: str) ->
     _write("process_learned", unit, program=program, process=process, argument=argument)
 
 
+def log_ownership(unit: str, event: str, detail: str = "") -> None:
+    _write("ownership", unit, ownership_event=event, detail=detail)
+
+
 def log_claude_mode(unit: str, event: str, detail: str) -> None:
     _write("claude_mode", unit, mode_event=event, detail=detail)

@@ -10,7 +10,6 @@ is skipped due to late restarts.
 
 import logging
 import threading
-import time
 from datetime import date, datetime
 from typing import Callable
 
@@ -31,6 +30,7 @@ class Scheduler:
     def __init__(self):
         self._tasks: list[_Task] = []
         self._last_run: dict[str, date] = {}
+        self._stop = threading.Event()
 
     def register(self, name: str, func: Callable, hour: int, minute: int = 0) -> None:
         """Register a daily task.
@@ -49,10 +49,15 @@ class Scheduler:
         t = threading.Thread(target=self._loop, daemon=True, name="Scheduler")
         t.start()
 
+    def stop(self) -> None:
+        """Stop firing tasks. Used when this unit hands ownership back, so
+        only the unit that owns the system runs its scheduled jobs."""
+        self._stop.set()
+
     # ------------------------------------------------------------------
 
     def _loop(self) -> None:
-        while True:
+        while not self._stop.is_set():
             now = datetime.now()
             today = now.date()
 
@@ -72,7 +77,7 @@ class Scheduler:
                         name=f"Task-{task.name}",
                     ).start()
 
-            time.sleep(self._CHECK_INTERVAL)
+            self._stop.wait(self._CHECK_INTERVAL)
 
     def _run_task(self, task: _Task) -> None:
         try:

@@ -414,6 +414,65 @@ def test_network_open_program_for_other_unit_ignored(mocker):
     assistant._launcher.open.assert_not_called()
 
 
+def test_network_spotify_app_start_and_stop_run_on_any_unit(mocker):
+    """spotify_app broadcasts are OS-level and need no Spotify credentials,
+    so a follower (which has no SpotifyController) must still act on them."""
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    mock_app = mocker.patch("src.assistant.spotify_app")
+
+    assistant._handle_network_command({"type": "spotify_app", "action": "start"})
+    mock_app.start.assert_called_once()
+    mock_app.stop.assert_not_called()
+
+    assistant._handle_network_command({"type": "spotify_app", "action": "stop"})
+    mock_app.stop.assert_called_once()
+
+
+def test_network_open_url_for_this_unit_opens_browser(mocker):
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    assistant._launcher = mocker.MagicMock()
+
+    assistant._handle_network_command({
+        "type": "open_url", "target_unit": "Kitchen", "url": "https://www.youtube.com/watch?v=x",
+    })
+
+    assistant._launcher.open.assert_called_once_with(
+        "browser", argument="https://www.youtube.com/watch?v=x"
+    )
+
+
+def test_network_open_url_without_target_opens_on_every_unit(mocker):
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    assistant._launcher = mocker.MagicMock()
+
+    assistant._handle_network_command({
+        "type": "open_url", "target_unit": None, "url": "https://www.youtube.com/watch?v=x",
+    })
+
+    assistant._launcher.open.assert_called_once_with(
+        "browser", argument="https://www.youtube.com/watch?v=x"
+    )
+
+
+def test_network_open_url_for_other_unit_ignored(mocker):
+    assistant, _, _, _, _, _ = _make_follower_assistant(
+        mocker, listener_queries=[], listen_once_returns=[]
+    )
+    assistant._launcher = mocker.MagicMock()
+
+    assistant._handle_network_command({
+        "type": "open_url", "target_unit": "Bedroom", "url": "https://www.youtube.com/watch?v=x",
+    })
+
+    assistant._launcher.open.assert_not_called()
+
+
 def test_follower_constructs_program_launcher(mocker):
     """ProgramLauncher must exist on ALL roles — followers execute remote launches locally."""
     mock_launcher_cls = mocker.patch("src.assistant.ProgramLauncher")

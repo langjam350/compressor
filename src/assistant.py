@@ -5,6 +5,7 @@ import threading
 import time
 
 from src import action_log
+from src.cluster import ClusterError, Coordinator, Unit, UnitRegistry
 from src.config_loader import load_config
 from src.stt import SpeechListener
 from src.tts import TTSEngine
@@ -14,6 +15,8 @@ from src.actions import ACTIONS
 from src.actions.context import ActionContext
 from src.integrations.tuya import TuyaController
 from src.integrations.spotify import SpotifyController
+from src.integrations import spotify_app
+from src.integrations.youtube import YouTubeSearcher
 from src.integrations.launcher import ProgramLauncher
 from src.integrations.coding_agents import create_session
 from src.network.host_server import app, run_server
@@ -60,10 +63,15 @@ You can control smart home devices, music, and open programs on the computer, bu
 
 
 class Assistant:
-    def __init__(self, config_path: str = "config.yaml"):
+    def __init__(
+        self,
+        config_path: str = "config.yaml",
+        unit_name: str | None = None,
+        units_path: str = "units.json",
+    ):
         self._config = load_config(config_path)
-        self._role = self._config["role"]
-        self._unit_name = self._config.get("unit_name", "host")
+        self._unit_name = unit_name or self._config.get("unit_name") or "host"
+        self._host_port = self._config.get("host_port", 8765)
         self._tts = TTSEngine()
         self._listener = SpeechListener(
             self._config["wake_word"],
@@ -72,9 +80,8 @@ class Assistant:
             wake_threshold=float(self._config.get("wake_threshold", 0.5)),
         )
 
-        host_port = self._config.get("host_port", 8765)
-        ws_ip = "127.0.0.1" if self._role == "host" else self._config.get("host_ip", "127.0.0.1")
-        self._network = NetworkClient(ws_ip, host_port)
+        # Re-pointed at whoever owns the system once the election settles.
+        self._network = NetworkClient("127.0.0.1", self._host_port)
         self._launcher = ProgramLauncher(
             self._config.get("programs", []) or [],
             unit_name=self._unit_name,
@@ -82,68 +89,201 @@ class Assistant:
 
         self._tuya = None
         self._spotify = None
+        self._youtube = None
         self._scheduler = None
         self._ai_clients: dict[str, dict] = {}
         self._unit_locks: dict[str, threading.Lock] = {}
         self._registry_lock = threading.Lock()
+        self._role_lock = threading.Lock()
         self._system_prompt = None
+        self._role = "follower"
+        self._coordinator: Coordinator | None = None
+        self._pinned_role: str | None = None
 
-        if self._role == "host":
-            action_log.configure()
-            t = threading.Thread(
-                target=run_server,
-                kwargs={"host": "0.0.0.0", "port": host_port},
-                daemon=True,
-            )
-            t.start()
-            print(f"[Compressor] Host server started on port {host_port}")
-            time.sleep(1)  # Give uvicorn time to bind before the WS client connects
+        # Every unit serves the API whether or not it owns the system, so that
+        # peers can probe /health at any time. Ownership is what gates the
+        # query handler, not whether the server is up.
+        action_log.configure()
+        app.state.unit_name = self._unit_name
+        app.state.owner = False
+        app.state.query_handler = None
+        threading.Thread(
+            target=run_server,
+            kwargs={"host": "0.0.0.0", "port": self._host_port},
+            daemon=True,
+        ).start()
+        print(f"[Compressor] '{self._unit_name}' listening on port {self._host_port}")
+        time.sleep(1)  # Give uvicorn time to bind before the WS client connects
 
-            location = self._network.get_info()
-
-            tuya_cfg = self._config.get("tuya", {})
-            devices = tuya_cfg.get("devices", [])
-            self._tuya = TuyaController(devices)
-
-            spotify_cfg = self._config.get("spotify", {})
-            self._spotify = (
-                SpotifyController(
-                    spotify_cfg["client_id"],
-                    spotify_cfg["client_secret"],
-                    spotify_cfg["redirect_uri"],
-                )
-                if spotify_cfg
-                else None
-            )
-
-            self._system_prompt = build_system_prompt(
-                location, devices, self._config.get("programs", []) or []
-            )
-
-            self._scheduler = Scheduler()
-            self._scheduler.register(
-                "tuya_sync",
-                lambda: tuya_sync.run(on_complete=self._on_tuya_sync),
-                hour=0,  # midnight
-            )
-            self._scheduler.start()
-
-            # Only wire the query handler once all host state above is fully
-            # constructed. Until this line, app.state.query_handler stays at
-            # its module-level default (None), so host_server.py's own
-            # "Host is not ready to process queries yet." response covers
-            # the startup window instead of _process_query touching
-            # partially-initialized state.
-            app.state.query_handler = self._process_query
+        # Held across both calls so the coordinator's watch thread, which
+        # starts inside _elect, can never apply a change before the initial
+        # role is in place.
+        with self._role_lock:
+            owner = self._elect(units_path)
+            self._apply_owner(owner, announce=False)
 
         # WebSocket for house-speaker coordination
         self._network.on_message(self._handle_network_command)
         self._network.start_websocket()
 
+    # ------------------------------------------------------------------
+    # Ownership
+    # ------------------------------------------------------------------
+
+    def _elect(self, units_path: str) -> Unit | None:
+        """Decide who owns the system and start watching for changes.
+
+        Returns the owning Unit, or None when `role` is pinned in config.yaml
+        (static mode — no election, no failover)."""
+        pinned = self._config.get("role")
+        if pinned:
+            self._pinned_role = pinned
+            print(f"[Compressor] Role pinned to '{pinned}' in config.yaml — no tier-list election.")
+            return None
+
+        try:
+            registry = UnitRegistry.load(units_path)
+        except FileNotFoundError:
+            raise ClusterError(
+                f"No '{units_path}' found and no 'role:' pinned in config.yaml. "
+                "Compressor needs one or the other to know whether it owns the system."
+            ) from None
+
+        eligible = bool(self._config.get("anthropic_api_key"))
+        self._coordinator = Coordinator(registry, self._unit_name, eligible=eligible)
+        app.state.priority = self._coordinator.unit.priority
+        if not eligible:
+            print(
+                "[Compressor] No anthropic_api_key in config.yaml — this unit can relay "
+                "but will never take ownership."
+            )
+
+        tiers = " > ".join(f"{u.priority}. {u.name}" for u in registry.units)
+        print(f"[Compressor] Ownership tiers: {tiers}")
+        return self._coordinator.start(self._on_owner_change)
+
+    def _on_owner_change(self, owner: Unit | None) -> None:
+        with self._role_lock:
+            self._apply_owner(owner, announce=True)
+
+    def _apply_owner(self, owner: Unit | None, *, announce: bool) -> None:
+        """Take ownership or hand it over. Call with _role_lock held."""
+        if self._coordinator is None:  # pinned role — the pre-tier-list behaviour
+            if self._pinned_role == "host":
+                self._become_owner(announce=announce)
+            else:
+                self._network.set_host(
+                    self._config.get("host_ip", "127.0.0.1"), self._host_port
+                )
+            return
+
+        if owner is not None and owner.name == self._coordinator.unit.name:
+            self._become_owner(announce=announce)
+        else:
+            self._become_follower(owner, announce=announce)
+
+    def _become_owner(self, *, announce: bool) -> None:
+        if self._role == "host":
+            return
+        self._role = "host"
+        self._network.set_host("127.0.0.1", self._host_port)
+
+        location = self._network.get_info()
+
+        tuya_cfg = self._config.get("tuya", {}) or {}
+        devices = tuya_cfg.get("devices", []) or []
+        self._tuya = TuyaController(devices)
+
+        spotify_cfg = self._config.get("spotify", {})
+        self._spotify = (
+            SpotifyController(
+                spotify_cfg["client_id"],
+                spotify_cfg["client_secret"],
+                spotify_cfg["redirect_uri"],
+                app_starter=self._start_spotify_everywhere,
+            )
+            if spotify_cfg
+            else None
+        )
+        if self._spotify is None:
+            print("[Compressor] No 'spotify:' section in config.yaml — Spotify control disabled.")
+
+        youtube_cfg = self._config.get("youtube", {}) or {}
+        if YouTubeSearcher.available():
+            self._youtube = YouTubeSearcher(youtube_cfg.get("channel_defaults"))
+        else:
+            print("[Compressor] yt-dlp not installed — YouTube fallback disabled.")
+
+        self._system_prompt = build_system_prompt(
+            location, devices, self._config.get("programs", []) or []
+        )
+        # Any clients cached while following were built against a stale (or
+        # absent) system prompt. dict.clear() is atomic, and a query already
+        # in flight holds its own reference to the client it is using.
+        self._ai_clients.clear()
+
+        self._scheduler = Scheduler()
+        self._scheduler.register(
+            "tuya_sync",
+            lambda: tuya_sync.run(on_complete=self._on_tuya_sync),
+            hour=0,  # midnight
+        )
+        self._scheduler.start()
+
+        # Only advertise ownership and wire the query handler once all host
+        # state above is fully constructed. Until these lines, peers see
+        # owner:false and host_server.py's own "Host is not ready to process
+        # queries yet." covers the window, instead of _process_query touching
+        # partially-initialized state.
+        app.state.query_handler = self._process_query
+        app.state.owner = True
+
+        print(f"[Compressor] '{self._unit_name}' now OWNS the system.")
+        action_log.log_ownership(self._unit_name, "acquired")
+        if announce:
+            self._speak_safe("Taking over as the main unit.")
+
+    def _become_follower(self, owner: Unit | None, *, announce: bool) -> None:
+        was_owner = self._role == "host"
+        self._role = "follower"
+        app.state.owner = False
+        app.state.query_handler = None
+
+        if self._scheduler is not None:
+            self._scheduler.stop()  # only the owner runs the scheduled jobs
+            self._scheduler = None
+        self._tuya = None
+        self._spotify = None
+        self._youtube = None
+        self._system_prompt = None
+        self._ai_clients.clear()
+
+        if owner is None:
+            print("[Compressor] No owner reachable — queries will fail until a unit comes online.")
+            if was_owner:
+                action_log.log_ownership(self._unit_name, "lost")
+                if announce:
+                    self._speak_safe("I've lost the system.")
+            return
+
+        self._network.set_host(owner.host_ip, owner.host_port)
+        print(f"[Compressor] Following '{owner.name}' at {owner.host_ip}:{owner.host_port}.")
+        if was_owner:
+            action_log.log_ownership(self._unit_name, "released", owner.name)
+            if announce:
+                self._speak_safe(f"Handing the system back to {owner.name}.")
+
     def _on_wake(self) -> None:
         self._tts.speak("Yes?")
         if self._role == "host":
             action_log.log_wake(self._unit_name)
+
+    def _start_spotify_everywhere(self) -> None:
+        """Open the Spotify app on this machine and every follower. Used
+        both by the explicit start_app voice action's broadcast and as the
+        SpotifyController app_starter when playback finds no Connect device."""
+        print(f"[Spotify] {spotify_app.start()}")
+        self._network.broadcast({"type": "spotify_app", "action": "start"})
 
     def _on_tuya_sync(self, updated_devices: list[dict]) -> None:
         """Reload TuyaController after a successful cloud sync."""
@@ -159,6 +299,22 @@ class Assistant:
                 payload.get("query"),
                 house_speakers=False,
             )
+        elif ptype == "spotify_app":
+            # App start/stop applies to EVERY unit, host and follower alike —
+            # it's OS-level and needs no Spotify credentials.
+            if payload.get("action") == "stop":
+                print(f"[Spotify] {spotify_app.stop()}")
+            else:
+                print(f"[Spotify] {spotify_app.start()}")
+        elif ptype == "open_url":
+            # target_unit None/absent means every unit (house-wide YouTube).
+            target = payload.get("target_unit")
+            if target is not None and target != self._unit_name:
+                return
+            url = payload.get("url")
+            if url:
+                result = self._launcher.open("browser", argument=url)
+                print(f"[Compressor] Remote open_url: {result}")
         elif ptype == "open_program":
             if payload.get("target_unit") != self._unit_name:
                 return  # addressed to a different unit
@@ -367,6 +523,7 @@ class Assistant:
             unit_name=unit_name,
             tuya=self._tuya,
             spotify=self._spotify,
+            youtube=self._youtube,
             launcher=self._launcher,
             network=self._network,
             config=self._config,

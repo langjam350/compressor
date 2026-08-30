@@ -8,6 +8,7 @@ class ActionContext:
     unit_name: str
     tuya: Any = None
     spotify: Any = None
+    youtube: Any = None
     launcher: Any = None
     network: Any = None
     config: Optional[dict] = None
