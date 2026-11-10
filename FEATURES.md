@@ -93,6 +93,9 @@ rationale are in `AGENTS.md`.
 | Parallel control with a concurrency cap | `src/integrations/tuya.py:100` (`_control_many`), cap at `:10` |
 | Per-device failure isolation | `src/integrations/tuya.py:89` (`_safe_control`) |
 | Device list | `config.yaml` under `tuya.devices` |
+| Voice action: on-demand LAN scan to find missing/stale device IPs | `src/actions/scan_network.py` (`run`) |
+| Underlying UDP discovery scan | `scan_tuya.py:11` (`scan_devices`) |
+| Live `TuyaController` reload after a scan | `src/assistant.py:288` (`Assistant._on_tuya_sync`), passed via `ActionContext.tuya_reload` |
 
 ## 6. Music — Spotify, with a YouTube fallback
 
@@ -140,7 +143,24 @@ rationale are in `AGENTS.md`.
 | Voice-shaped system prompt | `claude_code.py:6` (`VOICE_SYSTEM_PROMPT`) |
 | Config | `config.yaml` under `coding_agent` |
 
-## 9. Multi-unit networking
+## 9. Delayed WezTerm messages
+
+Types a message into a named WezTerm tab (e.g. one running an interactive
+Claude Code session) at a future clock time — for resuming an agent once a
+usage limit refreshes.
+
+| Part | Where |
+|---|---|
+| Voice action | `src/actions/message_wezterm_tab.py` (`run`) |
+| Tool schema | `src/tools.py` (`message_wezterm_tab`) |
+| Resolving hour/minute into a fire time, rolling to tomorrow if passed | `src/actions/message_wezterm_tab.py` (`_compute_fire_at`) |
+| Same-unit vs. cross-unit dispatch (local call vs. broadcast) | `src/actions/message_wezterm_tab.py` (`run`) |
+| Valid target-unit names | `src/assistant.py` (`Assistant._known_unit_names`) |
+| Receiving a scheduled send addressed to this unit | `src/assistant.py` (`Assistant._handle_network_command`, `schedule_wezterm_send` branch) |
+| One-shot in-memory timer (not persisted across restarts) | `src/assistant.py` (`Assistant._schedule_wezterm_send`) |
+| Finding the tab and typing the message | `src/integrations/wezterm.py` (`find_pane_by_tab_title`, `send_to_tab`) |
+
+## 10. Multi-unit networking
 
 | Part | Where |
 |---|---|
@@ -151,9 +171,9 @@ rationale are in `AGENTS.md`.
 | WebSocket relay between units | `src/network/host_server.py:70` (`/ws`) |
 | Client WS connect with backoff | `src/network/client.py:72` (`_run_ws_loop`) |
 | Broadcasting to other units | `src/network/client.py:96` (`broadcast`) |
-| Handling a broadcast (Spotify, open URL, open program) | `src/assistant.py:293` (`_handle_network_command`) |
+| Handling a broadcast (Spotify, open URL, open program, scheduled WezTerm send) | `src/assistant.py:293` (`_handle_network_command`) |
 
-## 10. Action log
+## 11. Action log
 
 | Part | Where |
 |---|---|
@@ -161,7 +181,7 @@ rationale are in `AGENTS.md`.
 | Record writer | `src/action_log.py:31` (`_write`) |
 | Event types | `src/action_log.py:46`–`75`: wake, query, tool_call, response, error, process_learned, ownership, claude_mode |
 
-## 11. Configuration
+## 12. Configuration
 
 | Part | Where |
 |---|---|

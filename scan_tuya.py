@@ -8,7 +8,7 @@ import sys
 import tinytuya
 
 
-def scan_devices(timeout_retries: int = 18) -> None:
+def scan_devices(timeout_retries: int = 18) -> dict:
     print("Scanning local network for Tuya devices (UDP broadcast)...")
     print("This may take up to 30 seconds.\n")
 
@@ -17,7 +17,7 @@ def scan_devices(timeout_retries: int = 18) -> None:
     if not devices:
         print("No Tuya devices found on the network.")
         print("Make sure your devices are powered on and on the same network.")
-        return
+        return {}
 
     print(f"Found {len(devices)} device(s):\n")
     print(f"{'IP':<18} {'Device ID':<26} {'Version':<10} {'Product Key'}")
@@ -51,6 +51,8 @@ def scan_devices(timeout_retries: int = 18) -> None:
     print("  1. Log in to https://iot.tuya.com")
     print("  2. Go to Cloud > Development > your project > Devices")
     print("  3. Find each device and copy its 'Local Key'")
+
+    return devices
 
 
 if __name__ == "__main__":
