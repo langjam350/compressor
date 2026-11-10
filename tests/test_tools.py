@@ -1,7 +1,9 @@
 def test_tools_module_holds_all_schemas():
     from src.tools import TOOLS
     names = [t["name"] for t in TOOLS]
-    assert names == ["control_tuya_device", "control_spotify", "open_program"]
+    assert names == [
+        "control_tuya_device", "control_spotify", "open_program", "scan_network", "message_wezterm_tab",
+    ]
 
 
 def test_open_program_schema():

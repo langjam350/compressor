@@ -91,4 +91,58 @@ TOOLS = [
             "required": ["program"]
         }
     },
+    {
+        "name": "scan_network",
+        "description": (
+            "Scan the local network for smart home devices and update the ones that were "
+            "unreachable because their IP address was missing or had changed. Use this when "
+            "the user asks to scan the network, find their devices, or when a device control "
+            "attempt reported it couldn't find a device's IP."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    },
+    {
+        "name": "message_wezterm_tab",
+        "description": (
+            "Schedule a text message to be typed (and submitted with Enter) into a named "
+            "WezTerm terminal tab at a specific clock time today. Most often used to send "
+            "a delayed instruction to a Claude Code agent already running in that tab, e.g. "
+            "to resume work once a usage limit refreshes. If the given time already passed "
+            "today, it fires tomorrow at that time instead."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tab_name": {
+                    "type": "string",
+                    "description": "The WezTerm tab's title, exactly as it appears in the tab bar."
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The text to type into the tab and submit with Enter."
+                },
+                "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23,
+                    "description": "Hour of day to send, 24-hour clock."
+                },
+                "minute": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 59,
+                    "description": "Minute of the hour to send (default 0)."
+                },
+                "unit": {
+                    "type": "string",
+                    "description": "Which unit's machine the WezTerm tab is on, e.g. 'Personal Laptop'. Defaults to the unit being spoken to."
+                }
+            },
+            "required": ["tab_name", "message", "hour"]
+        }
+    },
 ]

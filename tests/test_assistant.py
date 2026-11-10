@@ -473,6 +473,61 @@ def test_network_open_url_for_other_unit_ignored(mocker):
     assistant._launcher.open.assert_not_called()
 
 
+def test_known_unit_names_pinned_role_returns_only_self(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    assert assistant._known_unit_names() == ["Kitchen"]
+
+
+def test_network_schedule_wezterm_send_for_this_unit_schedules(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mock_schedule = mocker.patch.object(assistant, "_schedule_wezterm_send")
+
+    assistant._handle_network_command({
+        "type": "schedule_wezterm_send", "target_unit": "Kitchen",
+        "tab_name": "jldesigns", "message": "continue", "fire_at": "2026-01-01T15:00:00",
+    })
+
+    mock_schedule.assert_called_once()
+
+
+def test_network_schedule_wezterm_send_for_other_unit_ignored(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mock_schedule = mocker.patch.object(assistant, "_schedule_wezterm_send")
+
+    assistant._handle_network_command({
+        "type": "schedule_wezterm_send", "target_unit": "Bedroom",
+        "tab_name": "jldesigns", "message": "continue", "fire_at": "2026-01-01T15:00:00",
+    })
+
+    mock_schedule.assert_not_called()
+
+
+def test_schedule_wezterm_send_starts_a_daemon_timer_with_clamped_delay(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mock_timer_cls = mocker.patch("src.assistant.threading.Timer")
+
+    assistant._schedule_wezterm_send({
+        "tab_name": "jldesigns", "message": "continue",
+        "fire_at": "2000-01-01T00:00:00",  # far in the past
+    })
+
+    args, kwargs = mock_timer_cls.call_args
+    assert args[0] == 0.0  # delay clamped to zero, never negative
+    assert args[1] == assistant._fire_wezterm_send
+    assert kwargs["args"] == ("jldesigns", "continue")
+    assert mock_timer_cls.return_value.daemon is True
+    mock_timer_cls.return_value.start.assert_called_once()
+
+
+def test_fire_wezterm_send_delegates_to_the_integration(mocker, capsys):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mocker.patch("src.assistant.wezterm.send_to_tab", return_value="Sent message to 'jldesigns'.")
+
+    assistant._fire_wezterm_send("jldesigns", "continue")
+
+    assert "Sent message to 'jldesigns'." in capsys.readouterr().out
+
+
 def test_follower_constructs_program_launcher(mocker):
     """ProgramLauncher must exist on ALL roles — followers execute remote launches locally."""
     mock_launcher_cls = mocker.patch("src.assistant.ProgramLauncher")

@@ -3,6 +3,7 @@ import queue
 import re
 import threading
 import time
+from datetime import datetime
 
 from src import action_log
 from src.cluster import ClusterError, Coordinator, Unit, UnitRegistry
@@ -16,6 +17,7 @@ from src.actions.context import ActionContext
 from src.integrations.tuya import TuyaController
 from src.integrations.spotify import SpotifyController
 from src.integrations import spotify_app
+from src.integrations import wezterm
 from src.integrations.youtube import YouTubeSearcher
 from src.integrations.launcher import ProgramLauncher
 from src.integrations.coding_agents import create_session
@@ -324,6 +326,34 @@ class Assistant:
                 argument=payload.get("argument"),
             )
             print(f"[Compressor] Remote open_program: {result}")
+        elif ptype == "schedule_wezterm_send":
+            if payload.get("target_unit") != self._unit_name:
+                return  # addressed to a different unit
+            self._schedule_wezterm_send(payload)
+
+    def _known_unit_names(self) -> list[str]:
+        """Every unit name valid as a message_wezterm_tab target."""
+        if self._coordinator is None:
+            return [self._unit_name]
+        return [u.name for u in self._coordinator.registry.units]
+
+    def _schedule_wezterm_send(self, payload: dict) -> None:
+        """Start a one-shot timer that types `message` into a WezTerm tab at
+        `fire_at`. Runs on whichever unit's machine actually owns that tab —
+        called directly when this unit is the target, or from a received
+        broadcast otherwise. Not persisted: a restart before fire_at drops it."""
+        fire_at = datetime.fromisoformat(payload["fire_at"])
+        delay = max(0.0, (fire_at - datetime.now()).total_seconds())
+        tab_name = payload["tab_name"]
+        message = payload["message"]
+        timer = threading.Timer(delay, self._fire_wezterm_send, args=(tab_name, message))
+        timer.daemon = True
+        timer.start()
+        print(f"[WezTerm] Scheduled message to '{tab_name}' at {fire_at.strftime('%H:%M')}.")
+
+    def _fire_wezterm_send(self, tab_name: str, message: str) -> None:
+        result = wezterm.send_to_tab(tab_name, message)
+        print(f"[WezTerm] {result}")
 
     def _get_unit_lock(self, unit_name: str) -> threading.Lock:
         """Return (creating if needed) the lock that serializes requests for one unit.
@@ -528,6 +558,9 @@ class Assistant:
             network=self._network,
             config=self._config,
             host_unit_name=self._unit_name,
+            tuya_reload=self._on_tuya_sync,
+            known_units=self._known_unit_names(),
+            schedule_wezterm_send=self._schedule_wezterm_send,
         )
         result = action(ctx, tool_input)
         print(f"[Tool] {tool_name} result: {result}")
