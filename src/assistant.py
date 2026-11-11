@@ -24,6 +24,7 @@ from src.integrations.coding_agents import create_session
 from src.network.host_server import app, run_server
 from src.network.client import NetworkClient
 from src.scheduler import Scheduler
+from src.session_id import generate_session_id
 from src.tasks import tuya_sync
 
 log = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ class Assistant:
         self._config = load_config(config_path)
         self._unit_name = unit_name or self._config.get("unit_name") or "host"
         self._host_port = self._config.get("host_port", 8765)
+        self._session_id = generate_session_id()
         self._tts = TTSEngine()
         self._listener = SpeechListener(
             self._config["wake_word"],
@@ -109,6 +111,8 @@ class Assistant:
         app.state.unit_name = self._unit_name
         app.state.owner = False
         app.state.query_handler = None
+        app.state.broadcast_handler = None
+        app.state.session_id = self._session_id
         threading.Thread(
             target=run_server,
             kwargs={"host": "0.0.0.0", "port": self._host_port},
@@ -238,6 +242,7 @@ class Assistant:
         # queries yet." covers the window, instead of _process_query touching
         # partially-initialized state.
         app.state.query_handler = self._process_query
+        app.state.broadcast_handler = self._speak_and_listen
         app.state.owner = True
 
         print(f"[Compressor] '{self._unit_name}' now OWNS the system.")
@@ -250,6 +255,7 @@ class Assistant:
         self._role = "follower"
         app.state.owner = False
         app.state.query_handler = None
+        app.state.broadcast_handler = None
 
         if self._scheduler is not None:
             self._scheduler.stop()  # only the owner runs the scheduled jobs
@@ -330,6 +336,17 @@ class Assistant:
             if payload.get("target_unit") != self._unit_name:
                 return  # addressed to a different unit
             self._schedule_wezterm_send(payload)
+        elif ptype == "speak_request":
+            # Every unit speaks it — run off-thread so a slow TTS/listen
+            # round trip never stalls this unit's WS receive loop. Printed
+            # unconditionally (not just on error) since this is otherwise the
+            # only confirmation a follower ever received the push at all.
+            print(f"[Broadcast] Received speak_request {payload.get('request_id')}: {payload.get('text', '')!r}")
+            threading.Thread(
+                target=self._handle_speak_request,
+                args=(payload.get("request_id"), payload.get("text", "")),
+                daemon=True,
+            ).start()
 
     def _known_unit_names(self) -> list[str]:
         """Every unit name valid as a message_wezterm_tab target."""
@@ -350,6 +367,35 @@ class Assistant:
         timer.daemon = True
         timer.start()
         print(f"[WezTerm] Scheduled message to '{tab_name}' at {fire_at.strftime('%H:%M')}.")
+
+    def _speak_and_listen(self, text: str) -> str | None:
+        """Speak `text` aloud on this unit and capture one voice reply, if
+        any. Shared by the host's own /broadcast leg (called directly, no
+        network hop) and _handle_speak_request (a follower reacting to a
+        speak_request relayed over /ws)."""
+        try:
+            self._tts.speak(text)
+        except Exception as e:
+            print(f"[TTS Error] {e}")
+            return None
+        try:
+            return self._listener.listen_once(timeout=10)
+        except Exception as e:
+            print(f"[Listen Error] {e}")
+            return None
+
+    def _handle_speak_request(self, request_id: str, text: str) -> None:
+        reply = self._speak_and_listen(text)
+        if reply:
+            print(f"[Broadcast] {request_id}: replying with {reply!r}")
+            self._network.broadcast({
+                "type": "speak_response",
+                "request_id": request_id,
+                "unit": self._unit_name,
+                "text": reply,
+            })
+        else:
+            print(f"[Broadcast] {request_id}: spoke it, no reply captured.")
 
     def _fire_wezterm_send(self, tab_name: str, message: str) -> None:
         result = wezterm.send_to_tab(tab_name, message)

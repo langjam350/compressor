@@ -148,6 +148,7 @@ def _make_follower_assistant(mocker, listener_queries, listen_once_returns, netw
     mocker.patch("src.assistant.run_server")
     mocker.patch("src.assistant.threading.Thread")
     mocker.patch("src.assistant.time.sleep")
+    mocker.patch("src.assistant.action_log.configure")
 
     from src.assistant import Assistant
     assistant = Assistant()
@@ -517,6 +518,75 @@ def test_schedule_wezterm_send_starts_a_daemon_timer_with_clamped_delay(mocker):
     assert kwargs["args"] == ("jldesigns", "continue")
     assert mock_timer_cls.return_value.daemon is True
     mock_timer_cls.return_value.start.assert_called_once()
+
+
+def test_network_speak_request_spawns_a_handler_thread(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mock_thread_cls = mocker.patch("src.assistant.threading.Thread")
+
+    assistant._handle_network_command({
+        "type": "speak_request", "request_id": "req-1", "text": "dinner's ready",
+    })
+
+    args, kwargs = mock_thread_cls.call_args
+    assert kwargs["target"] == assistant._handle_speak_request
+    assert kwargs["args"] == ("req-1", "dinner's ready")
+    assert kwargs["daemon"] is True
+    mock_thread_cls.return_value.start.assert_called_once()
+
+
+def test_speak_and_listen_speaks_then_returns_voice_reply(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    assistant._listener.listen_once.side_effect = None
+    assistant._listener.listen_once.return_value = "yes chef"
+
+    result = assistant._speak_and_listen("dinner's ready")
+
+    assistant._tts.speak.assert_called_once_with("dinner's ready")
+    assistant._listener.listen_once.assert_called_once_with(timeout=10)
+    assert result == "yes chef"
+
+
+def test_speak_and_listen_returns_none_when_tts_fails(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    assistant._tts.speak.side_effect = Exception("tts exploded")
+
+    result = assistant._speak_and_listen("dinner's ready")
+
+    assert result is None
+    assistant._listener.listen_once.assert_not_called()
+
+
+def test_speak_and_listen_returns_none_when_listen_fails(mocker):
+    assistant, *_ = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    assistant._listener.listen_once.side_effect = Exception("mic exploded")
+
+    result = assistant._speak_and_listen("dinner's ready")
+
+    assert result is None
+
+
+def test_handle_speak_request_broadcasts_reply_when_present(mocker):
+    assistant, *_, mock_network = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mocker.patch.object(assistant, "_speak_and_listen", return_value="I'm here")
+
+    assistant._handle_speak_request("req-1", "who's home")
+
+    mock_network.broadcast.assert_called_once_with({
+        "type": "speak_response",
+        "request_id": "req-1",
+        "unit": assistant._unit_name,
+        "text": "I'm here",
+    })
+
+
+def test_handle_speak_request_does_not_broadcast_when_no_reply(mocker):
+    assistant, *_, mock_network = _make_follower_assistant(mocker, listener_queries=[], listen_once_returns=[])
+    mocker.patch.object(assistant, "_speak_and_listen", return_value=None)
+
+    assistant._handle_speak_request("req-1", "who's home")
+
+    mock_network.broadcast.assert_not_called()
 
 
 def test_fire_wezterm_send_delegates_to_the_integration(mocker, capsys):
